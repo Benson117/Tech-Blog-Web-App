@@ -29,7 +29,7 @@ try {
     $serverName = "tcp:tbserver2025.database.windows.net,1433";
     $database = "if0_40840685_tech_blog";
     $username = "CloudSA219c14b7";
-    $password = "Munjanja2026";
+    $password = "Tanaka117";
     
     // Using PDO for SQL Server
     $conn = new PDO("sqlsrv:Server=$serverName;Database=$database", $username, $password);
