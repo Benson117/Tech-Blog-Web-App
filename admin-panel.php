@@ -3,7 +3,7 @@ session_start();
 
 // PDO Database Connection
 try {
-    $conn = new PDO("sqlsrv:server = tcp:tbserver2025.database.windows.net,1433; Database = if0_40840685_tech_blog", "CloudSA219c14b7", "{your_password_here}");
+    $conn = new PDO("sqlsrv:server = tcp:tbserver2025.database.windows.net,1433; Database = if0_40840685_tech_blog", "CloudSA219c14b7", "Tanaka117");
     $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     
     // Optional: Set default fetch mode
