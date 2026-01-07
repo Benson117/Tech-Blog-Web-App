@@ -1,4 +1,4 @@
-<?php
+ <?php
 // ============================================
 // CONFIGURATION & DATABASE CONNECTION
 // ============================================
@@ -14,7 +14,7 @@ if (session_status() === PHP_SESSION_NONE) {
 
 // Site configuration
 define('SITE_NAME', 'Tech Blog Pro');
-define('SITE_URL', (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") . "://" . $_SERVER['HTTP_HOST']);
+define('SITE_URL', 'http://' . $_SERVER['HTTP_HOST']);
 define('ADMIN_EMAIL', 'admin@techblog.com');
 define('MAX_FILE_SIZE', 2097152); // 2MB
 define('UPLOAD_PATH', 'uploads/');
@@ -28,14 +28,14 @@ $dbname = 'if0_40840685_tech_blog';
 $username = 'CloudSA219c14b7';
 $password = 'Tanaka117';
 $conn = null;
-$demo_mode = false;
 
 // Try to create a database connection
 try {
-    // Azure SQL Database uses sqlsrv, not mysql
-    $conn = new PDO("sqlsrv:Server=$host;Database=$dbname", $username, $password);
+    // Try PDO MySQL first (most common)
+    $conn = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8mb4", $username, $password);
     $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $conn->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+    $conn->setAttribute(PDO::ATTR_EMULATE_PREPARES, false);
     
 } catch (PDOException $e) {
     // If connection fails, create demo mode
@@ -46,17 +46,12 @@ try {
 
 // Helper functions
 function executeQuery($conn, $sql, $params = []) {
-    global $demo_mode;
-    
-    if (!$conn && !$demo_mode) return false;
+    if (!$conn) return false;
     
     try {
-        if ($conn) {
-            $stmt = $conn->prepare($sql);
-            $stmt->execute($params);
-            return $stmt;
-        }
-        return false;
+        $stmt = $conn->prepare($sql);
+        $stmt->execute($params);
+        return $stmt;
     } catch (PDOException $e) {
         error_log("Query Error: " . $e->getMessage());
         return false;
@@ -64,14 +59,14 @@ function executeQuery($conn, $sql, $params = []) {
 }
 
 function fetchSingle($conn, $sql, $params = []) {
-    global $demo_mode;
-    
-    if (!$conn && $demo_mode) {
+    if (!$conn) {
         // Demo data for testing
         return [
-            'total_posts' => 2,
-            'total_views' => 360,
-            'total_comments' => 8
+            'id' => 1,
+            'title' => 'Welcome to Tech Blog Pro',
+            'author' => 'Admin',
+            'views' => 150,
+            'created_at' => date('Y-m-d H:i:s')
         ];
     }
     
@@ -80,9 +75,7 @@ function fetchSingle($conn, $sql, $params = []) {
 }
 
 function fetchAll($conn, $sql, $params = []) {
-    global $demo_mode;
-    
-    if (!$conn && $demo_mode) {
+    if (!$conn) {
         // Demo data for testing
         return [
             [
@@ -92,9 +85,7 @@ function fetchAll($conn, $sql, $params = []) {
                 'author' => 'John Doe',
                 'views' => 150,
                 'created_at' => date('Y-m-d H:i:s', strtotime('-2 days')),
-                'image_path' => null,
-                'content' => 'Demo content...',
-                'status' => 'published'
+                'image_path' => null
             ],
             [
                 'id' => 2,
@@ -103,9 +94,7 @@ function fetchAll($conn, $sql, $params = []) {
                 'author' => 'Jane Smith',
                 'views' => 210,
                 'created_at' => date('Y-m-d H:i:s', strtotime('-5 days')),
-                'image_path' => null,
-                'content' => 'Demo content...',
-                'status' => 'published'
+                'image_path' => null
             ]
         ];
     }
@@ -115,9 +104,7 @@ function fetchAll($conn, $sql, $params = []) {
 }
 
 function getCommentCount($conn, $postId) {
-    global $demo_mode;
-    
-    if (!$conn && $demo_mode) return 5; // Demo count
+    if (!$conn) return 5; // Demo count
     
     $sql = "SELECT COUNT(*) as count FROM comments WHERE post_id = ? AND status = 'approved'";
     $result = fetchSingle($conn, $sql, [$postId]);
@@ -135,59 +122,41 @@ if (!file_exists(UPLOAD_PATH) && is_writable(dirname(UPLOAD_PATH))) {
 
 // Get pagination
 $page = isset($_GET['page']) ? intval($_GET['page']) : 1;
-if ($page < 1) $page = 1;
 $posts_per_page = 6;
 $offset = ($page - 1) * $posts_per_page;
-
-// Initialize stats with default values to prevent undefined key errors
-$stats = [
-    'total_posts' => 0,
-    'total_views' => 0,
-    'total_comments' => 0
-];
 
 // Get total posts count
 $total_sql = "SELECT COUNT(*) as total FROM blog_posts WHERE status = 'published'";
 $total_result = fetchSingle($conn, $total_sql);
-$total_posts = isset($total_result['total']) ? $total_result['total'] : 2;
+$total_posts = $total_result ? $total_result['total'] : 2; // Demo count
 $total_pages = ceil($total_posts / $posts_per_page);
 if ($total_pages < 1) $total_pages = 1;
 
 // Get posts for current page
-if ($conn) {
-    // For SQL Server (Azure)
-    $posts_sql = "SELECT * FROM blog_posts WHERE status = 'published' ORDER BY created_at DESC OFFSET ? ROWS FETCH NEXT ? ROWS ONLY";
-    $posts = fetchAll($conn, $posts_sql, [$offset, $posts_per_page]);
-} else {
-    // Demo mode
-    $posts = fetchAll($conn, "");
-}
+$posts_sql = "SELECT * FROM blog_posts WHERE status = 'published' ORDER BY created_at DESC LIMIT ? OFFSET ?";
+$posts = fetchAll($conn, $posts_sql, [$posts_per_page, $offset]);
 
 // Get featured post
-$featured_sql = "SELECT TOP 1 * FROM blog_posts WHERE status = 'published' AND image_path IS NOT NULL ORDER BY created_at DESC";
+$featured_sql = "SELECT * FROM blog_posts WHERE status = 'published' AND image_path IS NOT NULL ORDER BY created_at DESC LIMIT 1";
 $featured_post = fetchSingle($conn, $featured_sql);
 
 // Get popular posts
-$popular_sql = "SELECT TOP 5 * FROM blog_posts WHERE status = 'published' ORDER BY views DESC";
+$popular_sql = "SELECT * FROM blog_posts WHERE status = 'published' ORDER BY views DESC LIMIT 5";
 $popular_posts = fetchAll($conn, $popular_sql);
 
 // Get categories
-$categories_sql = "SELECT TOP 6 author, COUNT(*) as post_count FROM blog_posts WHERE status = 'published' GROUP BY author ORDER BY post_count DESC";
+$categories_sql = "SELECT DISTINCT author, COUNT(*) as post_count FROM blog_posts WHERE status = 'published' GROUP BY author ORDER BY post_count DESC LIMIT 6";
 $categories = fetchAll($conn, $categories_sql);
 
-// Get total stats - FIXED: Ensure all keys exist
+// Get total stats
 $stats_sql = "SELECT 
         COUNT(*) as total_posts,
         COALESCE(SUM(views), 0) as total_views,
         (SELECT COUNT(*) FROM comments WHERE status = 'approved') as total_comments
         FROM blog_posts WHERE status = 'published'";
-$db_stats = fetchSingle($conn, $stats_sql);
-
-if ($db_stats) {
-    // Ensure all required keys exist
-    $stats['total_posts'] = isset($db_stats['total_posts']) ? $db_stats['total_posts'] : 0;
-    $stats['total_views'] = isset($db_stats['total_views']) ? $db_stats['total_views'] : 0;
-    $stats['total_comments'] = isset($db_stats['total_comments']) ? $db_stats['total_comments'] : 0;
+$stats = fetchSingle($conn, $stats_sql);
+if (!$stats) {
+    $stats = ['total_posts' => 2, 'total_views' => 360, 'total_comments' => 8];
 }
 
 // ============================================
@@ -204,191 +173,554 @@ if ($db_stats) {
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
     <style>
-        /* Previous CSS styles remain the same until the end... */
-        /* Add these new styles for footer and newsletter */
+        /* CSS Styles (same as before, but shortened for brevity) */
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --primary-light: #818cf8;
+            --secondary: #8b5cf6;
+            --accent: #10b981;
+            --dark: #1f2937;
+            --darker: #111827;
+            --light: #f9fafb;
+            --lighter: #ffffff;
+            --gray: #6b7280;
+            --gray-light: #9ca3af;
+            --border: #e5e7eb;
+            --gradient-primary: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            --gradient-dark: linear-gradient(135deg, var(--darker) 0%, var(--dark) 100%);
+            --shadow-sm: 0 2px 10px rgba(0,0,0,0.05);
+            --shadow-md: 0 4px 20px rgba(0,0,0,0.1);
+            --shadow-lg: 0 8px 30px rgba(0,0,0,0.15);
+            --shadow-xl: 0 15px 50px rgba(0,0,0,0.2);
+        }
         
-        /* Newsletter Section */
-        .newsletter-section {
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html {
+            scroll-behavior: smooth;
+        }
+        
+        body {
+            font-family: 'Poppins', sans-serif;
+            color: var(--dark);
+            line-height: 1.7;
+            background: var(--light);
+            overflow-x: hidden;
+        }
+        
+        .container {
+            max-width: 1280px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+        
+        /* Header */
+        header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            box-shadow: var(--shadow-sm);
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            transition: all 0.3s ease;
+        }
+        
+        header.scrolled {
+            padding: 0.5rem 0;
+            background: rgba(255, 255, 255, 0.98);
+            box-shadow: var(--shadow-md);
+        }
+        
+        .navbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.2rem 0;
+        }
+        
+        .logo {
+            font-size: 2rem;
+            font-weight: 800;
+            color: var(--primary);
+            text-decoration: none;
+            font-family: 'JetBrains Mono', monospace;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            transition: transform 0.3s ease;
+        }
+        
+        .logo:hover {
+            transform: translateY(-2px);
+        }
+        
+        .logo-icon {
             background: var(--gradient-primary);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-size: 2.2rem;
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: 2.5rem;
+            align-items: center;
+        }
+        
+        .nav-link {
+            color: var(--dark);
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 1rem;
+            position: relative;
+            padding: 0.5rem 0;
+            transition: color 0.3s ease;
+        }
+        
+        .nav-link:hover {
+            color: var(--primary);
+        }
+        
+        .nav-link::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 0;
+            height: 2px;
+            background: var(--gradient-primary);
+            transition: width 0.3s ease;
+        }
+        
+        .nav-link:hover::after {
+            width: 100%;
+        }
+        
+        .nav-actions {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+        
+        .search-btn {
+            background: none;
+            border: none;
+            color: var(--gray);
+            font-size: 1.2rem;
+            cursor: pointer;
+            transition: color 0.3s ease;
+        }
+        
+        .search-btn:hover {
+            color: var(--primary);
+        }
+        
+        /* Hero Section */
+        .hero {
+            background: var(--gradient-dark);
             color: white;
-            padding: 5rem 0;
+            padding: 8rem 0 6rem;
+            margin-top: 80px;
             position: relative;
             overflow: hidden;
         }
         
-        .newsletter-section::before {
+        .hero::before {
             content: '';
             position: absolute;
             top: 0;
             left: 0;
             right: 0;
             bottom: 0;
-            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 100" preserveAspectRatio="none"><path d="M0,0V100H1000V0C800,50 500,100 0,0Z" fill="rgba(255,255,255,0.1)"/></svg>');
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 100" preserveAspectRatio="none"><path d="M0,0V100H1000V0C800,50 500,100 0,0Z" fill="rgba(255,255,255,0.05)"/></svg>');
             background-size: 100% 100px;
             background-position: bottom;
             opacity: 0.1;
         }
         
-        .newsletter-container {
-            max-width: 700px;
-            margin: 0 auto;
+        .hero-content {
             text-align: center;
+            max-width: 800px;
+            margin: 0 auto;
             position: relative;
             z-index: 1;
         }
         
-        .newsletter-title {
-            font-size: 2.5rem;
-            font-weight: 700;
-            margin-bottom: 1rem;
+        .hero-title {
+            font-size: 3.5rem;
+            font-weight: 800;
+            margin-bottom: 1.5rem;
+            line-height: 1.2;
+            background: linear-gradient(to right, #ffffff, #a5b4fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
         }
         
-        .newsletter-subtitle {
-            font-size: 1.1rem;
-            opacity: 0.9;
+        .hero-subtitle {
+            font-size: 1.3rem;
             margin-bottom: 2.5rem;
-            max-width: 500px;
+            opacity: 0.9;
+            max-width: 600px;
             margin-left: auto;
             margin-right: auto;
         }
         
-        .newsletter-form {
+        .hero-stats {
             display: flex;
-            gap: 1rem;
-            max-width: 500px;
-            margin: 0 auto;
-        }
-        
-        .newsletter-input {
-            flex: 1;
-            padding: 1rem 1.5rem;
-            border: none;
-            border-radius: 10px;
-            font-size: 1rem;
-            font-family: 'Poppins', sans-serif;
-            outline: none;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        }
-        
-        .newsletter-btn {
-            background: var(--darker);
-            color: white;
-            border: none;
-            padding: 1rem 2rem;
-            border-radius: 10px;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-        }
-        
-        .newsletter-btn:hover {
-            background: var(--dark);
-            transform: translateY(-2px);
-        }
-        
-        /* Footer */
-        footer {
-            background: var(--darker);
-            color: white;
-            padding: 4rem 0 2rem;
-        }
-        
-        .footer-content {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            justify-content: center;
             gap: 3rem;
+            margin-top: 3rem;
+        }
+        
+        .stat-item {
+            text-align: center;
+        }
+        
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: 700;
+            display: block;
+            color: white;
+        }
+        
+        .stat-label {
+            font-size: 0.9rem;
+            opacity: 0.8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        /* Featured Post */
+        .featured-section {
+            padding: 4rem 0;
+        }
+        
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             margin-bottom: 3rem;
         }
         
-        .footer-logo {
-            font-size: 1.8rem;
-            font-weight: 800;
+        .section-title {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: var(--dark);
+            position: relative;
+            display: inline-block;
+        }
+        
+        .section-title::after {
+            content: '';
+            position: absolute;
+            bottom: -10px;
+            left: 0;
+            width: 60px;
+            height: 4px;
+            background: var(--gradient-primary);
+            border-radius: 2px;
+        }
+        
+        .section-subtitle {
+            color: var(--gray);
+            font-size: 1.1rem;
+            margin-top: 0.5rem;
+        }
+        
+        .featured-post {
+            background: var(--lighter);
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: var(--shadow-lg);
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 3rem;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .featured-post:hover {
+            transform: translateY(-10px);
+            box-shadow: var(--shadow-xl);
+        }
+        
+        .featured-image {
+            width: 100%;
+            height: 100%;
+            min-height: 400px;
+            object-fit: cover;
+            transition: transform 0.5s ease;
+        }
+        
+        .featured-post:hover .featured-image {
+            transform: scale(1.05);
+        }
+        
+        .featured-content {
+            padding: 3rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        
+        .featured-badge {
+            background: var(--gradient-primary);
             color: white;
+            padding: 0.5rem 1.5rem;
+            border-radius: 50px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            display: inline-block;
+            margin-bottom: 1.5rem;
+            align-self: flex-start;
+        }
+        
+        .featured-title {
+            font-size: 2.2rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            line-height: 1.3;
+        }
+        
+        .featured-title a {
+            color: inherit;
             text-decoration: none;
-            font-family: 'JetBrains Mono', monospace;
+            transition: color 0.3s ease;
+        }
+        
+        .featured-title a:hover {
+            color: var(--primary);
+        }
+        
+        .featured-excerpt {
+            color: var(--gray);
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
+            line-height: 1.8;
+        }
+        
+        /* Posts Grid */
+        .posts-section {
+            padding: 4rem 0;
+            background: var(--light);
+        }
+        
+        .posts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 2.5rem;
+            margin-bottom: 4rem;
+        }
+        
+        .post-card {
+            background: var(--lighter);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: var(--shadow-md);
+            transition: all 0.3s ease;
+            position: relative;
+        }
+        
+        .post-card:hover {
+            transform: translateY(-10px);
+            box-shadow: var(--shadow-lg);
+        }
+        
+        .post-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 5px;
+            background: var(--gradient-primary);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        .post-card:hover::before {
+            opacity: 1;
+        }
+        
+        .post-image-container {
+            position: relative;
+            overflow: hidden;
+            height: 220px;
+        }
+        
+        .post-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.5s ease;
+        }
+        
+        .post-card:hover .post-image {
+            transform: scale(1.1);
+        }
+        
+        .post-category {
+            position: absolute;
+            top: 1rem;
+            left: 1rem;
+            background: var(--lighter);
+            color: var(--primary);
+            padding: 0.4rem 1rem;
+            border-radius: 50px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            box-shadow: var(--shadow-sm);
+        }
+        
+        .post-content {
+            padding: 2rem;
+        }
+        
+        .post-title {
+            font-size: 1.4rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            line-height: 1.4;
+        }
+        
+        .post-title a {
+            color: inherit;
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+        
+        .post-title a:hover {
+            color: var(--primary);
+        }
+        
+        .post-excerpt {
+            color: var(--gray);
+            margin-bottom: 1.5rem;
+            line-height: 1.7;
+            font-size: 0.95rem;
+        }
+        
+        .post-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: var(--gray-light);
+            font-size: 0.85rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+        }
+        
+        .post-meta span {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .read-more {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 600;
             display: inline-flex;
             align-items: center;
-            gap: 10px;
-            margin-bottom: 1.5rem;
-        }
-        
-        .footer-description {
-            color: var(--gray-light);
-            line-height: 1.8;
-            margin-bottom: 1.5rem;
-        }
-        
-        .footer-title {
-            font-size: 1.2rem;
-            font-weight: 600;
-            margin-bottom: 1.5rem;
-            color: white;
-        }
-        
-        .footer-links {
-            list-style: none;
-        }
-        
-        .footer-link {
-            color: var(--gray-light);
-            text-decoration: none;
-            display: block;
-            padding: 0.5rem 0;
+            gap: 8px;
             transition: all 0.3s ease;
         }
         
-        .footer-link:hover {
-            color: var(--primary-light);
-            padding-left: 10px;
+        .read-more:hover {
+            gap: 12px;
+            color: var(--primary-dark);
         }
         
-        .social-links {
+        /* Pagination */
+        .pagination {
             display: flex;
-            gap: 1rem;
-            margin-top: 1rem;
-        }
-        
-        .social-link {
-            width: 40px;
-            height: 40px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
             justify-content: center;
-            color: white;
+            gap: 0.5rem;
+            margin-top: 4rem;
+        }
+        
+        .page-link {
+            padding: 0.8rem 1.2rem;
+            border: 2px solid var(--border);
+            border-radius: 10px;
             text-decoration: none;
+            color: var(--dark);
+            font-weight: 600;
             transition: all 0.3s ease;
         }
         
-        .social-link:hover {
-            background: var(--primary);
-            transform: translateY(-3px);
+        .page-link:hover,
+        .page-link.active {
+            background: var(--gradient-primary);
+            color: white;
+            border-color: transparent;
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
         }
         
-        .footer-bottom {
-            text-align: center;
-            padding-top: 2rem;
-            border-top: 1px solid rgba(255,255,255,0.1);
-            color: var(--gray-light);
-            font-size: 0.9rem;
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .featured-post {
+                grid-template-columns: 1fr;
+            }
+            
+            .featured-image {
+                min-height: 300px;
+            }
         }
         
         @media (max-width: 768px) {
-            .newsletter-form {
-                flex-direction: column;
+            .container {
+                padding: 0 1.5rem;
             }
             
-            .newsletter-title {
-                font-size: 2rem;
+            .navbar {
+                flex-direction: column;
+                gap: 1.5rem;
+                padding: 1.5rem 0;
+            }
+            
+            .nav-links {
+                flex-wrap: wrap;
+                justify-content: center;
+                gap: 1.5rem;
+            }
+            
+            .hero-title {
+                font-size: 2.5rem;
+            }
+            
+            .hero-stats {
+                flex-direction: column;
+                gap: 1.5rem;
+            }
+            
+            .posts-grid {
+                grid-template-columns: 1fr;
             }
         }
         
         @media (max-width: 480px) {
-            .footer-content {
-                grid-template-columns: 1fr;
+            .hero-title {
+                font-size: 2rem;
+            }
+            
+            .section-title {
+                font-size: 1.8rem;
+            }
+            
+            .featured-title {
+                font-size: 1.8rem;
+            }
+            
+            .featured-content {
+                padding: 2rem;
             }
         }
     </style>
@@ -585,79 +917,6 @@ if ($db_stats) {
         </div>
     </section>
 
-    <!-- Newsletter Section -->
-    <section class="newsletter-section" id="newsletter">
-        <div class="container">
-            <div class="newsletter-container">
-                <h2 class="newsletter-title">Subscribe to Our Newsletter</h2>
-                <p class="newsletter-subtitle">Stay updated with the latest tech news, tutorials, and exclusive content delivered directly to your inbox.</p>
-                <form class="newsletter-form" action="subscribe.php" method="POST">
-                    <input type="email" name="email" class="newsletter-input" placeholder="Enter your email address" required>
-                    <button type="submit" class="newsletter-btn">Subscribe</button>
-                </form>
-            </div>
-        </div>
-    </section>
-
-    <!-- Footer -->
-    <footer>
-        <div class="container">
-            <div class="footer-content">
-                <div class="footer-column">
-                    <a href="index.php" class="footer-logo">
-                        <i class="fas fa-code"></i>
-                        <span><?php echo SITE_NAME; ?></span>
-                    </a>
-                    <p class="footer-description">
-                        Tech Blog Pro brings you the latest in technology, programming tutorials, 
-                        and industry insights from passionate developers worldwide.
-                    </p>
-                    <div class="social-links">
-                        <a href="#" class="social-link"><i class="fab fa-twitter"></i></a>
-                        <a href="#" class="social-link"><i class="fab fa-github"></i></a>
-                        <a href="#" class="social-link"><i class="fab fa-linkedin"></i></a>
-                        <a href="#" class="social-link"><i class="fab fa-youtube"></i></a>
-                    </div>
-                </div>
-                
-                <div class="footer-column">
-                    <h3 class="footer-title">Quick Links</h3>
-                    <ul class="footer-links">
-                        <li><a href="index.php" class="footer-link">Home</a></li>
-                        <li><a href="about.php" class="footer-link">About Us</a></li>
-                        <li><a href="contact.php" class="footer-link">Contact</a></li>
-                        <li><a href="privacy.php" class="footer-link">Privacy Policy</a></li>
-                        <li><a href="terms.php" class="footer-link">Terms of Service</a></li>
-                    </ul>
-                </div>
-                
-                <div class="footer-column">
-                    <h3 class="footer-title">Categories</h3>
-                    <ul class="footer-links">
-                        <li><a href="category.php?cat=php" class="footer-link">PHP Development</a></li>
-                        <li><a href="category.php?cat=javascript" class="footer-link">JavaScript</a></li>
-                        <li><a href="category.php?cat=python" class="footer-link">Python</a></li>
-                        <li><a href="category.php?cat=webdev" class="footer-link">Web Development</a></li>
-                        <li><a href="category.php?cat=ai" class="footer-link">Artificial Intelligence</a></li>
-                    </ul>
-                </div>
-                
-                <div class="footer-column">
-                    <h3 class="footer-title">Contact Info</h3>
-                    <ul class="footer-links">
-                        <li><i class="fas fa-envelope" style="margin-right: 10px;"></i> <?php echo ADMIN_EMAIL; ?></li>
-                        <li><i class="fas fa-globe" style="margin-right: 10px;"></i> <?php echo SITE_URL; ?></li>
-                        <li><i class="fas fa-clock" style="margin-right: 10px;"></i> Mon-Fri: 9AM-6PM</li>
-                    </ul>
-                </div>
-            </div>
-            
-            <div class="footer-bottom">
-                <p>&copy; <?php echo date('Y'); ?> <?php echo SITE_NAME; ?>. All rights reserved.</p>
-            </div>
-        </div>
-    </footer>
-
     <script>
         // Header scroll effect
         window.addEventListener('scroll', function() {
@@ -689,16 +948,6 @@ if ($db_stats) {
         // Simple search functionality
         document.querySelector('.search-btn').addEventListener('click', function() {
             alert('Search functionality will be implemented soon!');
-        });
-
-        // Newsletter form submission
-        document.querySelector('.newsletter-form').addEventListener('submit', function(e) {
-            e.preventDefault();
-            const email = this.querySelector('input[name="email"]').value;
-            if (email) {
-                alert('Thank you for subscribing! Check your email for confirmation.');
-                this.reset();
-            }
         });
 
         // Add hover effect to navigation
