@@ -7,39 +7,42 @@ $posts_per_page = 6;
 $offset = ($page - 1) * $posts_per_page;
 
 // Get total posts count
-$total_query = "SELECT COUNT(*) as total FROM blog_posts WHERE status = 'published'";
-$total_result = mysqli_query($conn, $total_query);
-$total_posts = mysqli_fetch_assoc($total_result)['total'];
+$sql = "SELECT COUNT(*) as total FROM blog_posts WHERE status = 'published'";
+$result = fetchSingle($conn, $sql);
+$total_posts = $result ? $result['total'] : 0;
 $total_pages = ceil($total_posts / $posts_per_page);
 
 // Get posts for current page
-$query = "SELECT * FROM blog_posts WHERE status = 'published' ORDER BY created_at DESC LIMIT $offset, $posts_per_page";
-$result = mysqli_query($conn, $query);
-$posts = $result ? mysqli_fetch_all($result, MYSQLI_ASSOC) : [];
+$sql = "SELECT * FROM blog_posts WHERE status = 'published' ORDER BY created_at DESC LIMIT ? OFFSET ?";
+$posts = fetchAll($conn, $sql, [$posts_per_page, $offset]);
 
 // Get featured post
-$featured_query = "SELECT * FROM blog_posts WHERE status = 'published' AND image_path IS NOT NULL ORDER BY created_at DESC LIMIT 1";
-$featured_result = mysqli_query($conn, $featured_query);
-$featured_post = $featured_result ? mysqli_fetch_assoc($featured_result) : null;
+$sql = "SELECT * FROM blog_posts WHERE status = 'published' AND image_path IS NOT NULL ORDER BY created_at DESC LIMIT 1";
+$featured_post = fetchSingle($conn, $sql);
 
 // Get most popular posts (by views)
-$popular_query = "SELECT * FROM blog_posts WHERE status = 'published' ORDER BY views DESC LIMIT 5";
-$popular_result = mysqli_query($conn, $popular_query);
-$popular_posts = $popular_result ? mysqli_fetch_all($popular_result, MYSQLI_ASSOC) : [];
+$sql = "SELECT * FROM blog_posts WHERE status = 'published' ORDER BY views DESC LIMIT 5";
+$popular_posts = fetchAll($conn, $sql);
 
 // Get categories (distinct authors as categories for now)
-$categories_query = "SELECT DISTINCT author, COUNT(*) as post_count FROM blog_posts WHERE status = 'published' GROUP BY author ORDER BY post_count DESC LIMIT 6";
-$categories_result = mysqli_query($conn, $categories_query);
-$categories = $categories_result ? mysqli_fetch_all($categories_result, MYSQLI_ASSOC) : [];
+$sql = "SELECT DISTINCT author, COUNT(*) as post_count FROM blog_posts WHERE status = 'published' GROUP BY author ORDER BY post_count DESC LIMIT 6";
+$categories = fetchAll($conn, $sql);
 
 // Get total stats
-$stats_query = "SELECT 
-                COUNT(*) as total_posts,
-                SUM(views) as total_views,
-                (SELECT COUNT(*) FROM comments WHERE status = 'approved') as total_comments
-                FROM blog_posts WHERE status = 'published'";
-$stats_result = mysqli_query($conn, $stats_query);
-$stats = $stats_result ? mysqli_fetch_assoc($stats_result) : ['total_posts' => 0, 'total_views' => 0, 'total_comments' => 0];
+$sql = "SELECT 
+        COUNT(*) as total_posts,
+        SUM(views) as total_views,
+        (SELECT COUNT(*) FROM comments WHERE status = 'approved') as total_comments
+        FROM blog_posts WHERE status = 'published'";
+$stats = fetchSingle($conn, $sql);
+$stats = $stats ?: ['total_posts' => 0, 'total_views' => 0, 'total_comments' => 0];
+
+// Helper function to get comment count
+function getCommentCount($conn, $postId) {
+    $sql = "SELECT COUNT(*) as count FROM comments WHERE post_id = ? AND status = 'approved'";
+    $result = fetchSingle($conn, $sql, [$postId]);
+    return $result ? $result['count'] : 0;
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -963,7 +966,7 @@ $stats = $stats_result ? mysqli_fetch_assoc($stats_result) : ['total_posts' => 0
             <?php if ($featured_post): ?>
             <div class="featured-post">
                 <div class="featured-image-container">
-                    <img src="<?php echo $featured_post['image_path'] ?? 'https://images.unsplash.com/photo-1555066931-4365d14bab8c?ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=80'; ?>" 
+                    <img src="<?php echo !empty($featured_post['image_path']) ? htmlspecialchars($featured_post['image_path']) : 'https://images.unsplash.com/photo-1555066931-4365d14bab8c?ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=80'; ?>" 
                          alt="<?php echo htmlspecialchars($featured_post['title']); ?>" class="featured-image">
                 </div>
                 <div class="featured-content">
@@ -979,14 +982,9 @@ $stats = $stats_result ? mysqli_fetch_assoc($stats_result) : ['total_posts' => 0
                     <div class="post-meta">
                         <span><i class="fas fa-user"></i> <?php echo htmlspecialchars($featured_post['author']); ?></span>
                         <span><i class="fas fa-calendar"></i> <?php echo date('M d, Y', strtotime($featured_post['created_at'])); ?></span>
-                        <span><i class="fas fa-eye"></i> <?php echo number_format($featured_post['views']); ?> views</span>
+                        <span><i class="fas fa-eye"></i> <?php echo number_format($featured_post['views'] ?? 0); ?> views</span>
                         <span><i class="fas fa-comments"></i> 
-                            <?php 
-                            $comment_count_query = "SELECT COUNT(*) as count FROM comments WHERE post_id = {$featured_post['id']} AND status = 'approved'";
-                            $comment_count_result = mysqli_query($conn, $comment_count_query);
-                            $comment_count = $comment_count_result ? mysqli_fetch_assoc($comment_count_result)['count'] : 0;
-                            echo $comment_count;
-                            ?> comments
+                            <?php echo getCommentCount($conn, $featured_post['id']); ?> comments
                         </span>
                     </div>
                     <a href="post.php?id=<?php echo $featured_post['id']; ?>" class="read-more">
@@ -1014,13 +1012,13 @@ $stats = $stats_result ? mysqli_fetch_assoc($stats_result) : ['total_posts' => 0
                 </div>
             </div>
             
-            <?php if (count($posts) > 0): ?>
+            <?php if (!empty($posts)): ?>
                 <div class="posts-grid">
                     <?php foreach ($posts as $post): ?>
                     <article class="post-card animate__animated animate__fadeInUp">
                         <div class="post-image-container">
-                            <?php if ($post['image_path']): ?>
-                            <img src="<?php echo $post['image_path']; ?>" 
+                            <?php if (!empty($post['image_path'])): ?>
+                            <img src="<?php echo htmlspecialchars($post['image_path']); ?>" 
                                  alt="<?php echo htmlspecialchars($post['title']); ?>" class="post-image">
                             <?php else: ?>
                             <div style="background: var(--gradient-primary); height: 100%; display: flex; align-items: center; justify-content: center; color: white;">
@@ -1040,14 +1038,9 @@ $stats = $stats_result ? mysqli_fetch_assoc($stats_result) : ['total_posts' => 0
                             </p>
                             <div class="post-meta">
                                 <span><i class="fas fa-calendar"></i> <?php echo date('M d, Y', strtotime($post['created_at'])); ?></span>
-                                <span><i class="fas fa-eye"></i> <?php echo number_format($post['views']); ?></span>
+                                <span><i class="fas fa-eye"></i> <?php echo number_format($post['views'] ?? 0); ?></span>
                                 <span><i class="fas fa-comments"></i> 
-                                    <?php 
-                                    $comment_count_query = "SELECT COUNT(*) as count FROM comments WHERE post_id = {$post['id']} AND status = 'approved'";
-                                    $comment_count_result = mysqli_query($conn, $comment_count_query);
-                                    $comment_count = $comment_count_result ? mysqli_fetch_assoc($comment_count_result)['count'] : 0;
-                                    echo $comment_count;
-                                    ?>
+                                    <?php echo getCommentCount($conn, $post['id']); ?>
                                 </span>
                             </div>
                             <a href="post.php?id=<?php echo $post['id']; ?>" class="read-more">
@@ -1324,7 +1317,5 @@ $stats = $stats_result ? mysqli_fetch_assoc($stats_result) : ['total_posts' => 0
 </body>
 </html>
 <?php 
-if (isset($conn)) {
-    mysqli_close($conn);
-}
+// Connection is closed automatically by PDO when script ends
 ?>
