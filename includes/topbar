@@ -1,1 +1,15 @@
-
+<div class="top-bar fade-in">
+    <div class="search-bar">
+        <i class="fas fa-search"></i>
+        <input type="text" class="search-input" placeholder="Search posts, comments, users...">
+    </div>
+    <div class="quick-actions">
+        <button class="notification-btn">
+            <i class="fas fa-bell"></i>
+            <span class="notification-count">3</span>
+        </button>
+        <a href="#post-form" class="btn btn-primary">
+            <i class="fas fa-plus"></i> Quick Post
+        </a>
+    </div>
+</div>
