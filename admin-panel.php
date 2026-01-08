@@ -1,17 +1,6 @@
 <?php
 session_start();
-
-// PDO Database Connection
-try {
-    $conn = new PDO("sqlsrv:server = tcp:tbserver2025.database.windows.net,1433; Database = if0_40840685_tech_blog", "CloudSA219c14b7", "Tanaka117");
-    $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    
-    // Optional: Set default fetch mode
-    $conn->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-    
-} catch (PDOException $e) {
-    die("Connection failed: " . $e->getMessage());
-}
+require_once 'config.php';
 
 // Check if admin is logged in
 if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
@@ -34,17 +23,17 @@ try {
     // Get total posts
     $stmt = $conn->query("SELECT COUNT(*) as count FROM blog_posts");
     $total_posts_row = $stmt->fetch();
-    $total_posts = $total_posts_row['count'];
+    $total_posts = $total_posts_row['count'] ?? 0;
 
     // Get total comments
     $stmt = $conn->query("SELECT COUNT(*) as count FROM comments");
     $comments_count_row = $stmt->fetch();
-    $total_comments = $comments_count_row['count'];
+    $total_comments = $comments_count_row['count'] ?? 0;
 
     // Get pending comments
     $stmt = $conn->query("SELECT COUNT(*) as count FROM comments WHERE status = 'pending'");
     $pending_comments_row = $stmt->fetch();
-    $pending_comments = $pending_comments_row['count'];
+    $pending_comments = $pending_comments_row['count'] ?? 0;
 
     // Get total views
     $stmt = $conn->query("SELECT SUM(views) as total FROM blog_posts");
@@ -54,7 +43,7 @@ try {
     // Get total authors
     $stmt = $conn->query("SELECT COUNT(DISTINCT author) as count FROM blog_posts");
     $authors_row = $stmt->fetch();
-    $total_authors = $authors_row['count'];
+    $total_authors = $authors_row['count'] ?? 0;
 
 } catch (PDOException $e) {
     $error = "Error fetching statistics: " . $e->getMessage();
@@ -97,17 +86,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             if ($_POST['action'] == 'add_post') {
                 // Add new post
                 $query = "INSERT INTO blog_posts (title, excerpt, content, author, image_path, status) 
-                          VALUES (:title, :excerpt, :content, :author, :image_path, 'published')";
+                          VALUES (?, ?, ?, ?, ?, 'published')";
                 $stmt = $conn->prepare($query);
-                $stmt->execute([
-                    ':title' => $title,
-                    ':excerpt' => $excerpt,
-                    ':content' => $content,
-                    ':author' => $author,
-                    ':image_path' => $image_path
-                ]);
-                $message = "Post added successfully!";
-                
+                $stmt->execute([$title, $excerpt, $content, $author, $image_path]);
+                $success_msg = "Post added successfully!";
             } else {
                 // Update existing post
                 $post_id = intval($_POST['post_id']);
@@ -115,39 +97,29 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 // If new image uploaded, update image_path
                 if ($image_path) {
                     $query = "UPDATE blog_posts SET 
-                              title = :title,
-                              excerpt = :excerpt,
-                              content = :content,
-                              author = :author,
-                              image_path = :image_path
-                              WHERE id = :id";
+                              title = ?,
+                              excerpt = ?,
+                              content = ?,
+                              author = ?,
+                              image_path = ?
+                              WHERE id = ?";
                     $stmt = $conn->prepare($query);
-                    $stmt->execute([
-                        ':title' => $title,
-                        ':excerpt' => $excerpt,
-                        ':content' => $content,
-                        ':author' => $author,
-                        ':image_path' => $image_path,
-                        ':id' => $post_id
-                    ]);
+                    $stmt->execute([$title, $excerpt, $content, $author, $image_path, $post_id]);
                 } else {
                     $query = "UPDATE blog_posts SET 
-                              title = :title,
-                              excerpt = :excerpt,
-                              content = :content,
-                              author = :author
-                              WHERE id = :id";
+                              title = ?,
+                              excerpt = ?,
+                              content = ?,
+                              author = ?
+                              WHERE id = ?";
                     $stmt = $conn->prepare($query);
-                    $stmt->execute([
-                        ':title' => $title,
-                        ':excerpt' => $excerpt,
-                        ':content' => $content,
-                        ':author' => $author,
-                        ':id' => $post_id
-                    ]);
+                    $stmt->execute([$title, $excerpt, $content, $author, $post_id]);
                 }
-                $message = "Post updated successfully!";
+                $success_msg = "Post updated successfully!";
             }
+            
+            $message = $success_msg;
+            
         } catch (PDOException $e) {
             $error = "Error: " . $e->getMessage();
         }
@@ -159,18 +131,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         
         try {
             // Get image path before deleting
-            $stmt = $conn->prepare("SELECT image_path FROM blog_posts WHERE id = :id");
-            $stmt->execute([':id' => $post_id]);
+            $stmt = $conn->prepare("SELECT image_path FROM blog_posts WHERE id = ?");
+            $stmt->execute([$post_id]);
             $row = $stmt->fetch();
             
             // Delete the image file if exists
-            if ($row && !empty($row['image_path']) && file_exists($row['image_path'])) {
+            if (!empty($row['image_path']) && file_exists($row['image_path'])) {
                 unlink($row['image_path']);
             }
             
             // Delete the post
-            $stmt = $conn->prepare("DELETE FROM blog_posts WHERE id = :id");
-            $stmt->execute([':id' => $post_id]);
+            $stmt = $conn->prepare("DELETE FROM blog_posts WHERE id = ?");
+            $stmt->execute([$post_id]);
+            
             $message = "Post deleted successfully!";
             
         } catch (PDOException $e) {
@@ -181,10 +154,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // APPROVE comment
     if (isset($_POST['action']) && $_POST['action'] == 'approve_comment' && isset($_POST['comment_id'])) {
         $comment_id = intval($_POST['comment_id']);
-        
         try {
-            $stmt = $conn->prepare("UPDATE comments SET status = 'approved' WHERE id = :id");
-            $stmt->execute([':id' => $comment_id]);
+            $stmt = $conn->prepare("UPDATE comments SET status = 'approved' WHERE id = ?");
+            $stmt->execute([$comment_id]);
             $message = "Comment approved successfully!";
         } catch (PDOException $e) {
             $error = "Error approving comment: " . $e->getMessage();
@@ -194,10 +166,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // REJECT comment
     if (isset($_POST['action']) && $_POST['action'] == 'reject_comment' && isset($_POST['comment_id'])) {
         $comment_id = intval($_POST['comment_id']);
-        
         try {
-            $stmt = $conn->prepare("UPDATE comments SET status = 'spam' WHERE id = :id");
-            $stmt->execute([':id' => $comment_id]);
+            $stmt = $conn->prepare("UPDATE comments SET status = 'spam' WHERE id = ?");
+            $stmt->execute([$comment_id]);
             $message = "Comment rejected and marked as spam!";
         } catch (PDOException $e) {
             $error = "Error rejecting comment: " . $e->getMessage();
@@ -207,10 +178,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // DELETE comment
     if (isset($_POST['action']) && $_POST['action'] == 'delete_comment' && isset($_POST['comment_id'])) {
         $comment_id = intval($_POST['comment_id']);
-        
         try {
-            $stmt = $conn->prepare("DELETE FROM comments WHERE id = :id");
-            $stmt->execute([':id' => $comment_id]);
+            $stmt = $conn->prepare("DELETE FROM comments WHERE id = ?");
+            $stmt->execute([$comment_id]);
             $message = "Comment deleted successfully!";
         } catch (PDOException $e) {
             $error = "Error deleting comment: " . $e->getMessage();
@@ -225,25 +195,31 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             switch ($_POST['bulk_action']) {
                 case 'approve':
                     $placeholders = str_repeat('?,', count($selected_ids) - 1) . '?';
-                    $stmt = $conn->prepare("UPDATE comments SET status = 'approved' WHERE id IN ($placeholders)");
+                    $query = "UPDATE comments SET status = 'approved' WHERE id IN ($placeholders)";
+                    $stmt = $conn->prepare($query);
                     $stmt->execute($selected_ids);
-                    $message = "Comments approved successfully!";
+                    $success_msg = "Comments approved successfully!";
                     break;
                     
                 case 'reject':
                     $placeholders = str_repeat('?,', count($selected_ids) - 1) . '?';
-                    $stmt = $conn->prepare("UPDATE comments SET status = 'spam' WHERE id IN ($placeholders)");
+                    $query = "UPDATE comments SET status = 'spam' WHERE id IN ($placeholders)";
+                    $stmt = $conn->prepare($query);
                     $stmt->execute($selected_ids);
-                    $message = "Comments rejected successfully!";
+                    $success_msg = "Comments rejected successfully!";
                     break;
                     
                 case 'delete':
                     $placeholders = str_repeat('?,', count($selected_ids) - 1) . '?';
-                    $stmt = $conn->prepare("DELETE FROM comments WHERE id IN ($placeholders)");
+                    $query = "DELETE FROM comments WHERE id IN ($placeholders)";
+                    $stmt = $conn->prepare($query);
                     $stmt->execute($selected_ids);
-                    $message = "Comments deleted successfully!";
+                    $success_msg = "Comments deleted successfully!";
                     break;
             }
+            
+            $message = $success_msg;
+            
         } catch (PDOException $e) {
             $error = "Error performing bulk action: " . $e->getMessage();
         }
@@ -253,10 +229,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 // Check if edit mode
 if (isset($_GET['edit'])) {
     $edit_id = intval($_GET['edit']);
-    
     try {
-        $stmt = $conn->prepare("SELECT * FROM blog_posts WHERE id = :id");
-        $stmt->execute([':id' => $edit_id]);
+        $stmt = $conn->prepare("SELECT * FROM blog_posts WHERE id = ?");
+        $stmt->execute([$edit_id]);
         
         if ($stmt->rowCount() > 0) {
             $edit_mode = true;
@@ -268,28 +243,23 @@ if (isset($_GET['edit'])) {
 }
 
 // Fetch all posts
-$posts = [];
 try {
     $stmt = $conn->query("SELECT * FROM blog_posts ORDER BY created_at DESC");
     $posts = $stmt->fetchAll();
 } catch (PDOException $e) {
+    $posts = [];
     $error = "Error fetching posts: " . $e->getMessage();
 }
 
 // Get all comments with post info for management
-$all_comments = [];
 try {
     $stmt = $conn->query("SELECT c.*, p.title as post_title FROM comments c 
                          LEFT JOIN blog_posts p ON c.post_id = p.id 
                          ORDER BY c.created_at DESC");
     $all_comments = $stmt->fetchAll();
 } catch (PDOException $e) {
+    $all_comments = [];
     $error = "Error fetching comments: " . $e->getMessage();
-}
-
-// Define SITE_NAME constant if not already defined
-if (!defined('SITE_NAME')) {
-    define('SITE_NAME', 'TechBlog');
 }
 ?>
 <!DOCTYPE html>
@@ -305,7 +275,6 @@ if (!defined('SITE_NAME')) {
     <!-- SimpleMDE -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
     <style>
-        /* Your CSS styles remain the same */
         :root {
             --primary: #6366f1;
             --primary-dark: #4f46e5;
@@ -1155,14 +1124,15 @@ if (!defined('SITE_NAME')) {
                                     <span><i class="fas fa-eye"></i> <?php echo $post['views']; ?> views</span>
                                     <span><i class="fas fa-comment"></i> 
                                         <?php 
-                                            // Get comment count for this post using PDO
+                                            // Get comment count for this post
                                             try {
-                                                $stmt = $conn->prepare("SELECT COUNT(*) as count FROM comments WHERE post_id = :post_id");
-                                                $stmt->execute([':post_id' => $post['id']]);
-                                                $comment_count_row = $stmt->fetch();
-                                                echo $comment_count_row['count'];
+                                                $stmt = $conn->prepare("SELECT COUNT(*) as count FROM comments WHERE post_id = ?");
+                                                $stmt->execute([$post['id']]);
+                                                $row = $stmt->fetch();
+                                                $comment_count = $row['count'] ?? 0;
+                                                echo $comment_count;
                                             } catch (PDOException $e) {
-                                                echo '0';
+                                                echo "0";
                                             }
                                         ?> comments
                                     </span>
