@@ -6,41 +6,38 @@ $post_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
 
 try {
     // Fetch the post
-    $query = "SELECT * FROM blog_posts WHERE id = :post_id AND status = 'published'";
-    $stmt = $conn->prepare($query);
-    $stmt->execute([':post_id' => $post_id]);
-    $post = $stmt->fetch();
-
-    if (!$post) {
+    $stmt = $conn->prepare("SELECT * FROM blog_posts WHERE id = ? AND status = 'published'");
+    $stmt->execute([$post_id]);
+    
+    if ($stmt->rowCount() == 0) {
         header('Location: index.php');
         exit();
     }
-
+    
+    $post = $stmt->fetch();
+    
     // Increment view count
-    $update_views = "UPDATE blog_posts SET views = views + 1 WHERE id = :post_id";
-    $stmt = $conn->prepare($update_views);
-    $stmt->execute([':post_id' => $post_id]);
+    $stmt = $conn->prepare("UPDATE blog_posts SET views = views + 1 WHERE id = ?");
+    $stmt->execute([$post_id]);
+    
+} catch (PDOException $e) {
+    die("Error loading post: " . $e->getMessage());
+}
 
-    // Handle comment submission
-    $comment_success = '';
-    $comment_error = '';
-    if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit_comment'])) {
-        $name = $_POST['name'] ?? '';
-        $email = $_POST['email'] ?? '';
-        $comment_content = $_POST['comment'] ?? '';
-        
-        // Validate required fields
-        if (!empty($name) && !empty($comment_content)) {
-            $query = "INSERT INTO comments (post_id, author, email, content, status) 
-                      VALUES (:post_id, :name, :email, :content, 'pending')";
-            
-            $stmt = $conn->prepare($query);
-            $stmt->execute([
-                ':post_id' => $post_id,
-                ':name' => $name,
-                ':email' => $email,
-                ':content' => $comment_content
-            ]);
+// Handle comment submission
+$comment_success = '';
+$comment_error = '';
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit_comment'])) {
+    $name = $_POST['name'] ?? '';
+    $email = $_POST['email'] ?? '';
+    $comment_content = $_POST['comment'] ?? '';
+    
+    // Validate required fields
+    if (!empty($name) && !empty($comment_content)) {
+        try {
+            $stmt = $conn->prepare("INSERT INTO comments (post_id, author, email, content, status) 
+                                   VALUES (?, ?, ?, ?, 'pending')");
+            $stmt->execute([$post_id, $name, $email, $comment_content]);
             
             $comment_success = "Thank you for your comment! It will be visible after moderation.";
             
@@ -48,29 +45,31 @@ try {
             $_POST['name'] = '';
             $_POST['email'] = '';
             $_POST['comment'] = '';
-        } else {
-            $comment_error = "Please fill in all required fields (Name and Comment).";
+            
+        } catch (PDOException $e) {
+            $comment_error = "Error submitting comment: " . $e->getMessage();
         }
+    } else {
+        $comment_error = "Please fill in all required fields (Name and Comment).";
     }
+}
 
-    // Fetch approved comments for this post
-    $comments_query = "SELECT * FROM comments WHERE post_id = :post_id AND status = 'approved' ORDER BY created_at DESC";
-    $stmt = $conn->prepare($comments_query);
-    $stmt->execute([':post_id' => $post_id]);
+// Fetch approved comments for this post
+try {
+    $stmt = $conn->prepare("SELECT * FROM comments WHERE post_id = ? AND status = 'approved' ORDER BY created_at DESC");
+    $stmt->execute([$post_id]);
     $comments = $stmt->fetchAll();
-
-    // Get related posts (same author or similar tags)
-    $author = $post['author'];
-    $related_query = "SELECT * FROM blog_posts WHERE author = :author AND id != :post_id AND status = 'published' ORDER BY created_at DESC LIMIT 3";
-    $stmt = $conn->prepare($related_query);
-    $stmt->execute([
-        ':author' => $author,
-        ':post_id' => $post_id
-    ]);
-    $related_posts = $stmt->fetchAll();
-    
 } catch (PDOException $e) {
-    die("Database error: " . $e->getMessage());
+    $comments = [];
+}
+
+// Get related posts (same author or similar tags)
+try {
+    $stmt = $conn->prepare("SELECT TOP 3 * FROM blog_posts WHERE author = ? AND id != ? AND status = 'published' ORDER BY created_at DESC");
+    $stmt->execute([$post['author'], $post_id]);
+    $related_posts = $stmt->fetchAll();
+} catch (PDOException $e) {
+    $related_posts = [];
 }
 ?>
 <!DOCTYPE html>
@@ -495,7 +494,6 @@ try {
         
         .back-to-top:hover {
             background: var(--primary-dark);
-            transform: translateY(-3px);
         }
         
         /* Responsive */
@@ -764,7 +762,3 @@ try {
     </script>
 </body>
 </html>
-<?php 
-// PDO connection closes automatically when $conn is destroyed
-// No need to explicitly close it
-?>
