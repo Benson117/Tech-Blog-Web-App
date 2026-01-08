@@ -403,14 +403,9 @@ if (isset($_SESSION['login_attempts']) && $_SESSION['login_attempts'] >= $max_at
         // Auto-focus on username field
         document.getElementById('username').focus();
         
-        // Password visibility toggle (optional)
+        // Password visibility toggle
         const passwordInput = document.getElementById('password');
         const passwordIcon = passwordInput.parentElement.querySelector('i');
-        
-        // Change icon on focus
-        passwordInput.addEventListener('focus', function() {
-            passwordIcon.className = 'fas fa-lock';
-        });
         
         // Add show/hide password toggle
         const toggleBtn = document.createElement('span');
