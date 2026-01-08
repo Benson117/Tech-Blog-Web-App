@@ -1,167 +1,58 @@
- <?php
-// ============================================
-// CONFIGURATION & DATABASE CONNECTION
-// ============================================
-
-// Enable error reporting
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
-
-// Start session
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
-
-// Site configuration
-define('SITE_NAME', 'Tech Blog Pro');
-define('SITE_URL', 'http://' . $_SERVER['HTTP_HOST']);
-define('ADMIN_EMAIL', 'admin@techblog.com');
-define('MAX_FILE_SIZE', 2097152); // 2MB
-define('UPLOAD_PATH', 'uploads/');
-
-// Set timezone
-date_default_timezone_set('UTC');
-
-// Database connection variables
-$host = 'tcp:tbserver2025.database.windows.net,1433';
-$dbname = 'if0_40840685_tech_blog';
-$username = 'CloudSA219c14b7';
-$password = 'Tanaka117';
-$conn = null;
-
-// Try to create a database connection
-try {
-    // Try PDO MySQL first (most common)
-    $conn = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8mb4", $username, $password);
-    $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    $conn->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-    $conn->setAttribute(PDO::ATTR_EMULATE_PREPARES, false);
-    
-} catch (PDOException $e) {
-    // If connection fails, create demo mode
-    $conn = null;
-    $demo_mode = true;
-    error_log("Database connection failed: " . $e->getMessage());
-}
-
-// Helper functions
-function executeQuery($conn, $sql, $params = []) {
-    if (!$conn) return false;
-    
-    try {
-        $stmt = $conn->prepare($sql);
-        $stmt->execute($params);
-        return $stmt;
-    } catch (PDOException $e) {
-        error_log("Query Error: " . $e->getMessage());
-        return false;
-    }
-}
-
-function fetchSingle($conn, $sql, $params = []) {
-    if (!$conn) {
-        // Demo data for testing
-        return [
-            'id' => 1,
-            'title' => 'Welcome to Tech Blog Pro',
-            'author' => 'Admin',
-            'views' => 150,
-            'created_at' => date('Y-m-d H:i:s')
-        ];
-    }
-    
-    $stmt = executeQuery($conn, $sql, $params);
-    return $stmt ? $stmt->fetch() : false;
-}
-
-function fetchAll($conn, $sql, $params = []) {
-    if (!$conn) {
-        // Demo data for testing
-        return [
-            [
-                'id' => 1,
-                'title' => 'Getting Started with PHP 8',
-                'excerpt' => 'Learn the basics of PHP 8 and its new features',
-                'author' => 'John Doe',
-                'views' => 150,
-                'created_at' => date('Y-m-d H:i:s', strtotime('-2 days')),
-                'image_path' => null
-            ],
-            [
-                'id' => 2,
-                'title' => 'React vs Vue: Which to Choose in 2024',
-                'excerpt' => 'Comparison of two popular JavaScript frameworks',
-                'author' => 'Jane Smith',
-                'views' => 210,
-                'created_at' => date('Y-m-d H:i:s', strtotime('-5 days')),
-                'image_path' => null
-            ]
-        ];
-    }
-    
-    $stmt = executeQuery($conn, $sql, $params);
-    return $stmt ? $stmt->fetchAll() : [];
-}
-
-function getCommentCount($conn, $postId) {
-    if (!$conn) return 5; // Demo count
-    
-    $sql = "SELECT COUNT(*) as count FROM comments WHERE post_id = ? AND status = 'approved'";
-    $result = fetchSingle($conn, $sql, [$postId]);
-    return $result ? $result['count'] : 0;
-}
-
-// Create uploads directory if it doesn't exist
-if (!file_exists(UPLOAD_PATH) && is_writable(dirname(UPLOAD_PATH))) {
-    mkdir(UPLOAD_PATH, 0755, true);
-}
-
-// ============================================
-// PAGE DATA FETCHING
-// ============================================
+<?php
+require_once 'config.php';
 
 // Get pagination
 $page = isset($_GET['page']) ? intval($_GET['page']) : 1;
 $posts_per_page = 6;
 $offset = ($page - 1) * $posts_per_page;
 
-// Get total posts count
-$total_sql = "SELECT COUNT(*) as total FROM blog_posts WHERE status = 'published'";
-$total_result = fetchSingle($conn, $total_sql);
-$total_posts = $total_result ? $total_result['total'] : 2; // Demo count
-$total_pages = ceil($total_posts / $posts_per_page);
-if ($total_pages < 1) $total_pages = 1;
+try {
+    // Get total posts count
+    $total_query = "SELECT COUNT(*) as total FROM blog_posts WHERE status = 'published'";
+    $stmt = $conn->prepare($total_query);
+    $stmt->execute();
+    $total_posts = $stmt->fetch()['total'];
+    $total_pages = ceil($total_posts / $posts_per_page);
 
-// Get posts for current page
-$posts_sql = "SELECT * FROM blog_posts WHERE status = 'published' ORDER BY created_at DESC LIMIT ? OFFSET ?";
-$posts = fetchAll($conn, $posts_sql, [$posts_per_page, $offset]);
+    // Get posts for current page
+    $query = "SELECT * FROM blog_posts WHERE status = 'published' ORDER BY created_at DESC LIMIT :offset, :limit";
+    $stmt = $conn->prepare($query);
+    $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    $stmt->bindValue(':limit', $posts_per_page, PDO::PARAM_INT);
+    $stmt->execute();
+    $posts = $stmt->fetchAll();
 
-// Get featured post
-$featured_sql = "SELECT * FROM blog_posts WHERE status = 'published' AND image_path IS NOT NULL ORDER BY created_at DESC LIMIT 1";
-$featured_post = fetchSingle($conn, $featured_sql);
+    // Get featured post
+    $featured_query = "SELECT * FROM blog_posts WHERE status = 'published' AND image_path IS NOT NULL ORDER BY created_at DESC LIMIT 1";
+    $stmt = $conn->prepare($featured_query);
+    $stmt->execute();
+    $featured_post = $stmt->fetch();
 
-// Get popular posts
-$popular_sql = "SELECT * FROM blog_posts WHERE status = 'published' ORDER BY views DESC LIMIT 5";
-$popular_posts = fetchAll($conn, $popular_sql);
+    // Get most popular posts (by views)
+    $popular_query = "SELECT * FROM blog_posts WHERE status = 'published' ORDER BY views DESC LIMIT 5";
+    $stmt = $conn->prepare($popular_query);
+    $stmt->execute();
+    $popular_posts = $stmt->fetchAll();
 
-// Get categories
-$categories_sql = "SELECT DISTINCT author, COUNT(*) as post_count FROM blog_posts WHERE status = 'published' GROUP BY author ORDER BY post_count DESC LIMIT 6";
-$categories = fetchAll($conn, $categories_sql);
+    // Get categories (distinct authors as categories for now)
+    $categories_query = "SELECT DISTINCT author, COUNT(*) as post_count FROM blog_posts WHERE status = 'published' GROUP BY author ORDER BY post_count DESC LIMIT 6";
+    $stmt = $conn->prepare($categories_query);
+    $stmt->execute();
+    $categories = $stmt->fetchAll();
 
-// Get total stats
-$stats_sql = "SELECT 
-        COUNT(*) as total_posts,
-        COALESCE(SUM(views), 0) as total_views,
-        (SELECT COUNT(*) FROM comments WHERE status = 'approved') as total_comments
-        FROM blog_posts WHERE status = 'published'";
-$stats = fetchSingle($conn, $stats_sql);
-if (!$stats) {
-    $stats = ['total_posts' => 2, 'total_views' => 360, 'total_comments' => 8];
+    // Get total stats
+    $stats_query = "SELECT 
+                    COUNT(*) as total_posts,
+                    SUM(views) as total_views,
+                    (SELECT COUNT(*) FROM comments WHERE status = 'approved') as total_comments
+                    FROM blog_posts WHERE status = 'published'";
+    $stmt = $conn->prepare($stats_query);
+    $stmt->execute();
+    $stats = $stmt->fetch() ?: ['total_posts' => 0, 'total_views' => 0, 'total_comments' => 0];
+
+} catch (PDOException $e) {
+    die("Database error: " . $e->getMessage());
 }
-
-// ============================================
-// HTML OUTPUT
-// ============================================
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -173,7 +64,6 @@ if (!$stats) {
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
     <style>
-        /* CSS Styles (same as before, but shortened for brevity) */
         :root {
             --primary: #6366f1;
             --primary-dark: #4f46e5;
@@ -637,6 +527,169 @@ if (!$stats) {
             color: var(--primary-dark);
         }
         
+        /* Categories Section */
+        .categories-section {
+            padding: 4rem 0;
+            background: var(--lighter);
+        }
+        
+        .categories-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 2rem;
+        }
+        
+        .category-card {
+            background: var(--light);
+            border-radius: 16px;
+            padding: 2.5rem 2rem;
+            text-align: center;
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+        }
+        
+        .category-card:hover {
+            background: var(--gradient-primary);
+            transform: translateY(-5px);
+            box-shadow: var(--shadow-lg);
+        }
+        
+        .category-card:hover * {
+            color: white !important;
+        }
+        
+        .category-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1.5rem;
+            color: var(--primary);
+        }
+        
+        .category-name {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--dark);
+        }
+        
+        .category-count {
+            color: var(--gray);
+            font-size: 0.9rem;
+        }
+        
+        /* Popular Posts */
+        .popular-section {
+            padding: 4rem 0;
+        }
+        
+        .popular-posts {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+        
+        .popular-post {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            background: var(--lighter);
+            padding: 1.5rem;
+            border-radius: 12px;
+            transition: all 0.3s ease;
+            border-left: 4px solid transparent;
+        }
+        
+        .popular-post:hover {
+            border-left-color: var(--primary);
+            transform: translateX(10px);
+            box-shadow: var(--shadow-md);
+        }
+        
+        .popular-rank {
+            font-size: 1.5rem;
+            font-weight: 800;
+            color: var(--primary);
+            min-width: 40px;
+        }
+        
+        .popular-content h4 {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .popular-content h4 a {
+            color: var(--dark);
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+        
+        .popular-content h4 a:hover {
+            color: var(--primary);
+        }
+        
+        .popular-meta {
+            color: var(--gray-light);
+            font-size: 0.85rem;
+            display: flex;
+            gap: 1rem;
+        }
+        
+        /* Newsletter */
+        .newsletter-section {
+            padding: 5rem 0;
+            background: var(--gradient-dark);
+            color: white;
+            text-align: center;
+        }
+        
+        .newsletter-content {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        .newsletter-title {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .newsletter-subtitle {
+            opacity: 0.9;
+            margin-bottom: 2rem;
+        }
+        
+        .newsletter-form {
+            display: flex;
+            gap: 1rem;
+            max-width: 500px;
+            margin: 2rem auto 0;
+        }
+        
+        .newsletter-input {
+            flex: 1;
+            padding: 1rem 1.5rem;
+            border: none;
+            border-radius: 50px;
+            font-family: 'Poppins', sans-serif;
+            font-size: 1rem;
+            outline: none;
+        }
+        
+        .newsletter-btn {
+            background: var(--gradient-primary);
+            color: white;
+            border: none;
+            padding: 1rem 2rem;
+            border-radius: 50px;
+            font-family: 'Poppins', sans-serif;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .newsletter-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(99, 102, 241, 0.3);
+        }
+        
         /* Pagination */
         .pagination {
             display: flex;
@@ -662,6 +715,124 @@ if (!$stats) {
             border-color: transparent;
             transform: translateY(-2px);
             box-shadow: var(--shadow-md);
+        }
+        
+        /* Footer */
+        footer {
+            background: var(--darker);
+            color: white;
+            padding: 5rem 0 2rem;
+        }
+        
+        .footer-content {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 3rem;
+            margin-bottom: 3rem;
+        }
+        
+        .footer-col h3 {
+            font-size: 1.3rem;
+            margin-bottom: 1.5rem;
+            color: white;
+        }
+        
+        .footer-logo {
+            font-size: 2rem;
+            font-weight: 800;
+            margin-bottom: 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            color: white;
+        }
+        
+        .footer-col p {
+            opacity: 0.8;
+            line-height: 1.8;
+        }
+        
+        .footer-links {
+            list-style: none;
+        }
+        
+        .footer-links li {
+            margin-bottom: 0.8rem;
+        }
+        
+        .footer-links a {
+            color: rgba(255,255,255,0.8);
+            text-decoration: none;
+            transition: color 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .footer-links a:hover {
+            color: white;
+            transform: translateX(5px);
+        }
+        
+        .social-links {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
+        
+        .social-link {
+            width: 40px;
+            height: 40px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            text-decoration: none;
+            transition: all 0.3s ease;
+        }
+        
+        .social-link:hover {
+            background: var(--primary);
+            transform: translateY(-3px);
+        }
+        
+        .copyright {
+            text-align: center;
+            padding-top: 3rem;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            color: rgba(255,255,255,0.6);
+            font-size: 0.9rem;
+        }
+        
+        /* Back to top */
+        .back-to-top {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            background: var(--gradient-primary);
+            color: white;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+            box-shadow: var(--shadow-lg);
+            transition: all 0.3s ease;
+            z-index: 100;
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        
+        .back-to-top.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        
+        .back-to-top:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(99, 102, 241, 0.4);
         }
         
         /* Responsive */
@@ -704,6 +875,19 @@ if (!$stats) {
             .posts-grid {
                 grid-template-columns: 1fr;
             }
+            
+            .newsletter-form {
+                flex-direction: column;
+            }
+            
+            .footer-content {
+                grid-template-columns: 1fr;
+                text-align: center;
+            }
+            
+            .social-links {
+                justify-content: center;
+            }
         }
         
         @media (max-width: 480px) {
@@ -722,17 +906,14 @@ if (!$stats) {
             .featured-content {
                 padding: 2rem;
             }
+            
+            .newsletter-title {
+                font-size: 2rem;
+            }
         }
     </style>
 </head>
 <body>
-    <!-- Debug info (remove in production) -->
-    <div style="position: fixed; bottom: 10px; right: 10px; background: rgba(0,0,0,0.8); color: white; padding: 10px; border-radius: 5px; font-size: 12px; z-index: 9999;">
-        PHP Version: <?php echo phpversion(); ?><br>
-        File: <?php echo basename(__FILE__); ?><br>
-        DB: <?php echo $conn ? 'Connected' : 'Demo Mode'; ?>
-    </div>
-
     <!-- Header -->
     <header id="header">
         <div class="container">
@@ -745,6 +926,8 @@ if (!$stats) {
                     <a href="#home" class="nav-link">Home</a>
                     <a href="#featured" class="nav-link">Featured</a>
                     <a href="#posts" class="nav-link">Blog</a>
+                    <a href="#categories" class="nav-link">Categories</a>
+                    <a href="#popular" class="nav-link">Popular</a>
                     <a href="#newsletter" class="nav-link">Newsletter</a>
                 </div>
                 <div class="nav-actions">
@@ -793,7 +976,7 @@ if (!$stats) {
             <?php if ($featured_post): ?>
             <div class="featured-post">
                 <div class="featured-image-container">
-                    <img src="<?php echo !empty($featured_post['image_path']) ? htmlspecialchars($featured_post['image_path']) : 'https://images.unsplash.com/photo-1555066931-4365d14bab8c?ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=80'; ?>" 
+                    <img src="<?php echo $featured_post['image_path'] ?? 'https://images.unsplash.com/photo-1555066931-4365d14bab8c?ixlib=rb-1.2.1&auto=format&fit=crop&w=800&q=80'; ?>" 
                          alt="<?php echo htmlspecialchars($featured_post['title']); ?>" class="featured-image">
                 </div>
                 <div class="featured-content">
@@ -804,17 +987,24 @@ if (!$stats) {
                         </a>
                     </h2>
                     <p class="featured-excerpt">
-                        <?php 
-                        $excerpt = $featured_post['excerpt'] ?? $featured_post['content'] ?? '';
-                        echo substr(strip_tags($excerpt), 0, 200) . '...'; 
-                        ?>
+                        <?php echo substr(strip_tags($featured_post['excerpt'] ?? ''), 0, 200) . '...'; ?>
                     </p>
                     <div class="post-meta">
                         <span><i class="fas fa-user"></i> <?php echo htmlspecialchars($featured_post['author']); ?></span>
                         <span><i class="fas fa-calendar"></i> <?php echo date('M d, Y', strtotime($featured_post['created_at'])); ?></span>
-                        <span><i class="fas fa-eye"></i> <?php echo number_format($featured_post['views'] ?? 0); ?> views</span>
+                        <span><i class="fas fa-eye"></i> <?php echo number_format($featured_post['views']); ?> views</span>
                         <span><i class="fas fa-comments"></i> 
-                            <?php echo getCommentCount($conn, $featured_post['id']); ?> comments
+                            <?php 
+                            try {
+                                $comment_count_query = "SELECT COUNT(*) as count FROM comments WHERE post_id = :post_id AND status = 'approved'";
+                                $stmt = $conn->prepare($comment_count_query);
+                                $stmt->execute([':post_id' => $featured_post['id']]);
+                                $comment_count = $stmt->fetch()['count'];
+                            } catch (PDOException $e) {
+                                $comment_count = 0;
+                            }
+                            echo $comment_count;
+                            ?> comments
                         </span>
                     </div>
                     <a href="post.php?id=<?php echo $featured_post['id']; ?>" class="read-more">
@@ -842,13 +1032,13 @@ if (!$stats) {
                 </div>
             </div>
             
-            <?php if (!empty($posts)): ?>
+            <?php if (count($posts) > 0): ?>
                 <div class="posts-grid">
                     <?php foreach ($posts as $post): ?>
                     <article class="post-card animate__animated animate__fadeInUp">
                         <div class="post-image-container">
-                            <?php if (!empty($post['image_path'])): ?>
-                            <img src="<?php echo htmlspecialchars($post['image_path']); ?>" 
+                            <?php if ($post['image_path']): ?>
+                            <img src="<?php echo $post['image_path']; ?>" 
                                  alt="<?php echo htmlspecialchars($post['title']); ?>" class="post-image">
                             <?php else: ?>
                             <div style="background: var(--gradient-primary); height: 100%; display: flex; align-items: center; justify-content: center; color: white;">
@@ -864,16 +1054,23 @@ if (!$stats) {
                                 </a>
                             </h3>
                             <p class="post-excerpt">
-                                <?php 
-                                $excerpt = $post['excerpt'] ?? $post['content'] ?? '';
-                                echo substr(strip_tags($excerpt), 0, 120) . '...'; 
-                                ?>
+                                <?php echo substr(strip_tags($post['excerpt'] ?? ''), 0, 120) . '...'; ?>
                             </p>
                             <div class="post-meta">
                                 <span><i class="fas fa-calendar"></i> <?php echo date('M d, Y', strtotime($post['created_at'])); ?></span>
-                                <span><i class="fas fa-eye"></i> <?php echo number_format($post['views'] ?? 0); ?></span>
+                                <span><i class="fas fa-eye"></i> <?php echo number_format($post['views']); ?></span>
                                 <span><i class="fas fa-comments"></i> 
-                                    <?php echo getCommentCount($conn, $post['id']); ?>
+                                    <?php 
+                                    try {
+                                        $comment_count_query = "SELECT COUNT(*) as count FROM comments WHERE post_id = :post_id AND status = 'approved'";
+                                        $stmt = $conn->prepare($comment_count_query);
+                                        $stmt->execute([':post_id' => $post['id']]);
+                                        $comment_count = $stmt->fetch()['count'];
+                                    } catch (PDOException $e) {
+                                        $comment_count = 0;
+                                    }
+                                    echo $comment_count;
+                                    ?>
                                 </span>
                             </div>
                             <a href="post.php?id=<?php echo $post['id']; ?>" class="read-more">
@@ -917,14 +1114,162 @@ if (!$stats) {
         </div>
     </section>
 
+    <!-- Categories Section -->
+    <section class="categories-section" id="categories">
+        <div class="container">
+            <div class="section-header">
+                <div>
+                    <h2 class="section-title">Explore Categories</h2>
+                    <p class="section-subtitle">Browse content by topic</p>
+                </div>
+            </div>
+            
+            <div class="categories-grid">
+                <?php if (!empty($categories)): ?>
+                    <?php foreach ($categories as $category): ?>
+                    <div class="category-card">
+                        <div class="category-icon">
+                            <i class="fas fa-code"></i>
+                        </div>
+                        <h3 class="category-name"><?php echo htmlspecialchars($category['author']); ?></h3>
+                        <p class="category-count"><?php echo $category['post_count']; ?> Articles</p>
+                    </div>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <div class="empty-state" style="grid-column: 1 / -1; text-align: center; padding: 3rem;">
+                        <i class="fas fa-tags" style="font-size: 3rem; color: var(--border); margin-bottom: 1rem;"></i>
+                        <h3>No categories yet</h3>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </section>
+
+    <!-- Popular Posts -->
+    <section class="popular-section" id="popular">
+        <div class="container">
+            <div class="section-header">
+                <div>
+                    <h2 class="section-title">Most Popular</h2>
+                    <p class="section-subtitle">Trending articles this week</p>
+                </div>
+            </div>
+            
+            <div class="popular-posts">
+                <?php if (!empty($popular_posts)): ?>
+                    <?php foreach ($popular_posts as $index => $popular_post): ?>
+                    <div class="popular-post">
+                        <div class="popular-rank">#<?php echo $index + 1; ?></div>
+                        <div class="popular-content">
+                            <h4>
+                                <a href="post.php?id=<?php echo $popular_post['id']; ?>">
+                                    <?php echo htmlspecialchars($popular_post['title']); ?>
+                                </a>
+                            </h4>
+                            <div class="popular-meta">
+                                <span><i class="fas fa-user"></i> <?php echo htmlspecialchars($popular_post['author']); ?></span>
+                                <span><i class="fas fa-eye"></i> <?php echo number_format($popular_post['views']); ?> views</span>
+                            </div>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <div style="text-align: center; padding: 2rem; color: var(--gray);">
+                        <i class="fas fa-chart-line" style="font-size: 3rem; margin-bottom: 1rem;"></i>
+                        <h3>No popular posts yet</h3>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </section>
+
+    <!-- Newsletter -->
+    <section class="newsletter-section" id="newsletter">
+        <div class="container">
+            <div class="newsletter-content">
+                <h2 class="newsletter-title">Stay Updated</h2>
+                <p class="newsletter-subtitle">Subscribe to our newsletter and never miss an update. Get the latest tech news, tutorials, and insights delivered to your inbox.</p>
+                <form class="newsletter-form">
+                    <input type="email" class="newsletter-input" placeholder="Enter your email address" required>
+                    <button type="submit" class="newsletter-btn">Subscribe</button>
+                </form>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-col">
+                    <div class="footer-logo"><?php echo SITE_NAME; ?></div>
+                    <p>Sharing knowledge and insights about technology, programming, and innovation with developers worldwide.</p>
+                    <div class="social-links">
+                        <a href="#" class="social-link"><i class="fab fa-twitter"></i></a>
+                        <a href="#" class="social-link"><i class="fab fa-github"></i></a>
+                        <a href="#" class="social-link"><i class="fab fa-linkedin"></i></a>
+                        <a href="#" class="social-link"><i class="fab fa-youtube"></i></a>
+                    </div>
+                </div>
+                
+                <div class="footer-col">
+                    <h3>Quick Links</h3>
+                    <ul class="footer-links">
+                        <li><a href="#home"><i class="fas fa-chevron-right"></i> Home</a></li>
+                        <li><a href="#featured"><i class="fas fa-chevron-right"></i> Featured</a></li>
+                        <li><a href="#posts"><i class="fas fa-chevron-right"></i> Blog</a></li>
+                        <li><a href="#categories"><i class="fas fa-chevron-right"></i> Categories</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-col">
+                    <h3>Resources</h3>
+                    <ul class="footer-links">
+                        <li><a href="#"><i class="fas fa-chevron-right"></i> Documentation</a></li>
+                        <li><a href="#"><i class="fas fa-chevron-right"></i> Tutorials</a></li>
+                        <li><a href="#"><i class="fas fa-chevron-right"></i> Code Examples</a></li>
+                        <li><a href="#"><i class="fas fa-chevron-right"></i> Community</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-col">
+                    <h3>Contact</h3>
+                    <ul class="footer-links">
+                        <li><a href="#"><i class="fas fa-envelope"></i> contact@example.com</a></li>
+                        <li><a href="#"><i class="fas fa-phone"></i> +1 (555) 123-4567</a></li>
+                        <li><a href="#"><i class="fas fa-map-marker-alt"></i> San Francisco, CA</a></li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="copyright">
+                &copy; <?php echo date('Y'); ?> <?php echo SITE_NAME; ?>. All rights reserved.
+            </div>
+        </div>
+    </footer>
+
+    <!-- Back to Top -->
+    <a href="#" class="back-to-top" id="backToTop">
+        <i class="fas fa-arrow-up"></i>
+    </a>
+
     <script>
         // Header scroll effect
         window.addEventListener('scroll', function() {
             const header = document.getElementById('header');
+            const backToTop = document.getElementById('backToTop');
+            
             if (window.scrollY > 50) {
                 header.classList.add('scrolled');
             } else {
                 header.classList.remove('scrolled');
+            }
+            
+            // Show/hide back to top button
+            if (window.scrollY > 300) {
+                backToTop.classList.add('visible');
+            } else {
+                backToTop.classList.remove('visible');
             }
         });
 
@@ -945,9 +1290,47 @@ if (!$stats) {
             });
         });
 
-        // Simple search functionality
+        // Back to top functionality
+        document.getElementById('backToTop').addEventListener('click', function(e) {
+            e.preventDefault();
+            window.scrollTo({
+                top: 0,
+                behavior: 'smooth'
+            });
+        });
+
+        // Newsletter form submission
+        document.querySelector('.newsletter-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const email = this.querySelector('.newsletter-input').value;
+            if (email) {
+                alert('Thank you for subscribing to our newsletter!');
+                this.querySelector('.newsletter-input').value = '';
+            }
+        });
+
+        // Search functionality
         document.querySelector('.search-btn').addEventListener('click', function() {
             alert('Search functionality will be implemented soon!');
+        });
+
+        // Animate elements on scroll
+        const observerOptions = {
+            threshold: 0.1,
+            rootMargin: '0px 0px -100px 0px'
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('animate__animated', 'animate__fadeInUp');
+                }
+            });
+        }, observerOptions);
+
+        // Observe all post cards and category cards
+        document.querySelectorAll('.post-card, .category-card, .popular-post').forEach(el => {
+            observer.observe(el);
         });
 
         // Add hover effect to navigation
@@ -960,15 +1343,10 @@ if (!$stats) {
                 this.style.transform = 'translateY(0)';
             });
         });
-
-        // Check if page loaded successfully
-        console.log('Page loaded successfully');
     </script>
 </body>
 </html>
 <?php 
-// Close connection if it exists
-if ($conn) {
-    $conn = null;
-}
+// PDO connection closes automatically when $conn is destroyed
+// No need to explicitly close it
 ?>
