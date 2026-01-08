@@ -166,32 +166,31 @@ function getCommentCount($conn, $postId) {
     return $result ? $result['count'] : 0;
 }
 
-// Get popular posts
+// Get popular posts - SQL Server compatible (using TOP)
 function getPopularPosts($conn, $limit = 5) {
-    $sql = "SELECT * FROM blog_posts WHERE status = 'published' ORDER BY views DESC LIMIT ?";
+    $sql = "SELECT TOP (?) * FROM blog_posts WHERE status = 'published' ORDER BY views DESC";
     return fetchAll($conn, $sql, [$limit]);
 }
 
-// Get recent posts
+// Get recent posts - SQL Server compatible (using TOP)
 function getRecentPosts($conn, $limit = 6) {
-    $sql = "SELECT * FROM blog_posts WHERE status = 'published' ORDER BY created_at DESC LIMIT ?";
+    $sql = "SELECT TOP (?) * FROM blog_posts WHERE status = 'published' ORDER BY created_at DESC";
     return fetchAll($conn, $sql, [$limit]);
 }
 
-// Get featured post
+// Get featured post - SQL Server compatible (using TOP)
 function getFeaturedPost($conn) {
     $sql = "SELECT TOP 1 * FROM blog_posts WHERE status = 'published' AND image_path IS NOT NULL ORDER BY created_at DESC";
     return fetchSingle($conn, $sql);
 }
 
-// Get categories (authors)
+// Get categories (authors) - SQL Server compatible (using TOP)
 function getCategories($conn, $limit = 6) {
-    $sql = "SELECT DISTINCT author, COUNT(*) as post_count 
+    $sql = "SELECT TOP (?) author, COUNT(*) as post_count 
             FROM blog_posts 
             WHERE status = 'published' 
             GROUP BY author 
-            ORDER BY post_count DESC 
-            LIMIT ?";
+            ORDER BY post_count DESC";
     return fetchAll($conn, $sql, [$limit]);
 }
 
