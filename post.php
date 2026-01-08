@@ -4,36 +4,44 @@ require_once 'config.php';
 // Get post ID from URL
 $post_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
 
-// Fetch the post
-$query = "SELECT * FROM blog_posts WHERE id = $post_id AND status = 'published'";
-$result = mysqli_query($conn, $query);
+try {
+    // Fetch the post
+    $query = "SELECT * FROM blog_posts WHERE id = :post_id AND status = 'published'";
+    $stmt = $conn->prepare($query);
+    $stmt->execute([':post_id' => $post_id]);
+    $post = $stmt->fetch();
 
-if (!$result || mysqli_num_rows($result) == 0) {
-    header('Location: index.php');
-    exit();
-}
+    if (!$post) {
+        header('Location: index.php');
+        exit();
+    }
 
-$post = mysqli_fetch_assoc($result);
+    // Increment view count
+    $update_views = "UPDATE blog_posts SET views = views + 1 WHERE id = :post_id";
+    $stmt = $conn->prepare($update_views);
+    $stmt->execute([':post_id' => $post_id]);
 
-// Increment view count
-$update_views = "UPDATE blog_posts SET views = views + 1 WHERE id = $post_id";
-mysqli_query($conn, $update_views);
-
-// Handle comment submission
-$comment_success = '';
-$comment_error = '';
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit_comment'])) {
-    $name = mysqli_real_escape_string($conn, $_POST['name'] ?? '');
-    $email = mysqli_real_escape_string($conn, $_POST['email'] ?? '');
-    $comment_content = mysqli_real_escape_string($conn, $_POST['comment'] ?? '');
-    
-    // Validate required fields
-    if (!empty($name) && !empty($comment_content)) {
-        // Always use 'author' column (since that's what your database has)
-        $query = "INSERT INTO comments (post_id, author, email, content, status) 
-                  VALUES ('$post_id', '$name', '$email', '$comment_content', 'pending')";
+    // Handle comment submission
+    $comment_success = '';
+    $comment_error = '';
+    if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit_comment'])) {
+        $name = $_POST['name'] ?? '';
+        $email = $_POST['email'] ?? '';
+        $comment_content = $_POST['comment'] ?? '';
         
-        if (mysqli_query($conn, $query)) {
+        // Validate required fields
+        if (!empty($name) && !empty($comment_content)) {
+            $query = "INSERT INTO comments (post_id, author, email, content, status) 
+                      VALUES (:post_id, :name, :email, :content, 'pending')";
+            
+            $stmt = $conn->prepare($query);
+            $stmt->execute([
+                ':post_id' => $post_id,
+                ':name' => $name,
+                ':email' => $email,
+                ':content' => $comment_content
+            ]);
+            
             $comment_success = "Thank you for your comment! It will be visible after moderation.";
             
             // Clear form fields
@@ -41,23 +49,29 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit_comment'])) {
             $_POST['email'] = '';
             $_POST['comment'] = '';
         } else {
-            $comment_error = "Error submitting comment: " . mysqli_error($conn);
+            $comment_error = "Please fill in all required fields (Name and Comment).";
         }
-    } else {
-        $comment_error = "Please fill in all required fields (Name and Comment).";
     }
+
+    // Fetch approved comments for this post
+    $comments_query = "SELECT * FROM comments WHERE post_id = :post_id AND status = 'approved' ORDER BY created_at DESC";
+    $stmt = $conn->prepare($comments_query);
+    $stmt->execute([':post_id' => $post_id]);
+    $comments = $stmt->fetchAll();
+
+    // Get related posts (same author or similar tags)
+    $author = $post['author'];
+    $related_query = "SELECT * FROM blog_posts WHERE author = :author AND id != :post_id AND status = 'published' ORDER BY created_at DESC LIMIT 3";
+    $stmt = $conn->prepare($related_query);
+    $stmt->execute([
+        ':author' => $author,
+        ':post_id' => $post_id
+    ]);
+    $related_posts = $stmt->fetchAll();
+    
+} catch (PDOException $e) {
+    die("Database error: " . $e->getMessage());
 }
-
-// Fetch approved comments for this post
-$comments_query = "SELECT * FROM comments WHERE post_id = $post_id AND status = 'approved' ORDER BY created_at DESC";
-$comments_result = mysqli_query($conn, $comments_query);
-$comments = $comments_result ? mysqli_fetch_all($comments_result, MYSQLI_ASSOC) : [];
-
-// Get related posts (same author or similar tags)
-$author = mysqli_real_escape_string($conn, $post['author']);
-$related_query = "SELECT * FROM blog_posts WHERE author = '$author' AND id != $post_id AND status = 'published' ORDER BY created_at DESC LIMIT 3";
-$related_result = mysqli_query($conn, $related_query);
-$related_posts = $related_result ? mysqli_fetch_all($related_result, MYSQLI_ASSOC) : [];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -751,7 +765,6 @@ $related_posts = $related_result ? mysqli_fetch_all($related_result, MYSQLI_ASSO
 </body>
 </html>
 <?php 
-if (isset($conn)) {
-    mysqli_close($conn);
-}
+// PDO connection closes automatically when $conn is destroyed
+// No need to explicitly close it
 ?>
