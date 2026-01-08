@@ -8,57 +8,40 @@ $offset = ($page - 1) * $posts_per_page;
 
 try {
     // Get total posts count
-    $total_query = "SELECT COUNT(*) as total FROM blog_posts WHERE status = 'published'";
-    $stmt = $conn->prepare($total_query);
-    $stmt->execute();
-    $total_posts = $stmt->fetch()['total'];
+    $stmt = $conn->query("SELECT COUNT(*) as total FROM blog_posts WHERE status = 'published'");
+    $total_posts = $stmt->fetch()['total'] ?? 0;
     $total_pages = ceil($total_posts / $posts_per_page);
 
-    // Get posts for current page - SQL Server compatible (using OFFSET FETCH)
-    $query = "SELECT * FROM blog_posts WHERE status = 'published' 
-              ORDER BY created_at DESC 
-              OFFSET :offset ROWS 
-              FETCH NEXT :limit ROWS ONLY";
-    $stmt = $conn->prepare($query);
-    $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
-    $stmt->bindValue(':limit', $posts_per_page, PDO::PARAM_INT);
+    // Get posts for current page - SQL Server pagination syntax
+    $stmt = $conn->prepare("SELECT * FROM blog_posts WHERE status = 'published' ORDER BY created_at DESC 
+                           OFFSET ? ROWS FETCH NEXT ? ROWS ONLY");
+    $stmt->bindValue(1, $offset, PDO::PARAM_INT);
+    $stmt->bindValue(2, $posts_per_page, PDO::PARAM_INT);
     $stmt->execute();
     $posts = $stmt->fetchAll();
 
-    // Get featured post - SQL Server compatible (using TOP)
-    $featured_query = "SELECT TOP 1 * FROM blog_posts WHERE status = 'published' AND image_path IS NOT NULL ORDER BY created_at DESC";
-    $stmt = $conn->prepare($featured_query);
-    $stmt->execute();
+    // Get featured post
+    $stmt = $conn->query("SELECT TOP 1 * FROM blog_posts WHERE status = 'published' AND image_path IS NOT NULL ORDER BY created_at DESC");
     $featured_post = $stmt->fetch();
 
-    // Get most popular posts (by views) - SQL Server compatible (using TOP)
-    $popular_query = "SELECT TOP 5 * FROM blog_posts WHERE status = 'published' ORDER BY views DESC";
-    $stmt = $conn->prepare($popular_query);
-    $stmt->execute();
+    // Get most popular posts (by views)
+    $stmt = $conn->query("SELECT TOP 5 * FROM blog_posts WHERE status = 'published' ORDER BY views DESC");
     $popular_posts = $stmt->fetchAll();
 
-    // Get categories (distinct authors as categories for now) - SQL Server compatible (using TOP)
-    $categories_query = "SELECT TOP 6 author, COUNT(*) as post_count 
-                        FROM blog_posts 
-                        WHERE status = 'published' 
-                        GROUP BY author 
-                        ORDER BY post_count DESC";
-    $stmt = $conn->prepare($categories_query);
-    $stmt->execute();
+    // Get categories (distinct authors as categories for now)
+    $stmt = $conn->query("SELECT DISTINCT author, COUNT(*) as post_count FROM blog_posts WHERE status = 'published' GROUP BY author ORDER BY post_count DESC");
     $categories = $stmt->fetchAll();
 
     // Get total stats
-    $stats_query = "SELECT 
-                    COUNT(*) as total_posts,
-                    SUM(views) as total_views,
-                    (SELECT COUNT(*) FROM comments WHERE status = 'approved') as total_comments
-                    FROM blog_posts WHERE status = 'published'";
-    $stmt = $conn->prepare($stats_query);
-    $stmt->execute();
-    $stats = $stmt->fetch() ?: ['total_posts' => 0, 'total_views' => 0, 'total_comments' => 0];
+    $stmt = $conn->query("SELECT 
+                         COUNT(*) as total_posts,
+                         SUM(views) as total_views,
+                         (SELECT COUNT(*) FROM comments WHERE status = 'approved') as total_comments
+                         FROM blog_posts WHERE status = 'published'");
+    $stats = $stmt->fetch() ?? ['total_posts' => 0, 'total_views' => 0, 'total_comments' => 0];
 
 } catch (PDOException $e) {
-    die("Database error: " . $e->getMessage());
+    die("Error loading page: " . $e->getMessage());
 }
 ?>
 <!DOCTYPE html>
@@ -71,7 +54,6 @@ try {
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
     <style>
-        /* Your existing CSS styles here - they remain unchanged */
         :root {
             --primary: #6366f1;
             --primary-dark: #4f46e5;
@@ -117,8 +99,808 @@ try {
             padding: 0 2rem;
         }
         
-        /* [Include all your existing CSS styles here - they remain unchanged] */
+        /* Header */
+        header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            box-shadow: var(--shadow-sm);
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            transition: all 0.3s ease;
+        }
         
+        header.scrolled {
+            padding: 0.5rem 0;
+            background: rgba(255, 255, 255, 0.98);
+            box-shadow: var(--shadow-md);
+        }
+        
+        .navbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.2rem 0;
+        }
+        
+        .logo {
+            font-size: 2rem;
+            font-weight: 800;
+            color: var(--primary);
+            text-decoration: none;
+            font-family: 'JetBrains Mono', monospace;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            transition: transform 0.3s ease;
+        }
+        
+        .logo:hover {
+            transform: translateY(-2px);
+        }
+        
+        .logo-icon {
+            background: var(--gradient-primary);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-size: 2.2rem;
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: 2.5rem;
+            align-items: center;
+        }
+        
+        .nav-link {
+            color: var(--dark);
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 1rem;
+            position: relative;
+            padding: 0.5rem 0;
+            transition: color 0.3s ease;
+        }
+        
+        .nav-link:hover {
+            color: var(--primary);
+        }
+        
+        .nav-link::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 0;
+            height: 2px;
+            background: var(--gradient-primary);
+            transition: width 0.3s ease;
+        }
+        
+        .nav-link:hover::after {
+            width: 100%;
+        }
+        
+        .nav-actions {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+        
+        .search-btn {
+            background: none;
+            border: none;
+            color: var(--gray);
+            font-size: 1.2rem;
+            cursor: pointer;
+            transition: color 0.3s ease;
+        }
+        
+        .search-btn:hover {
+            color: var(--primary);
+        }
+        
+        /* Hero Section */
+        .hero {
+            background: var(--gradient-dark);
+            color: white;
+            padding: 8rem 0 6rem;
+            margin-top: 80px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 100" preserveAspectRatio="none"><path d="M0,0V100H1000V0C800,50 500,100 0,0Z" fill="rgba(255,255,255,0.05)"/></svg>');
+            background-size: 100% 100px;
+            background-position: bottom;
+            opacity: 0.1;
+        }
+        
+        .hero-content {
+            text-align: center;
+            max-width: 800px;
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .hero-title {
+            font-size: 3.5rem;
+            font-weight: 800;
+            margin-bottom: 1.5rem;
+            line-height: 1.2;
+            background: linear-gradient(to right, #ffffff, #a5b4fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .hero-subtitle {
+            font-size: 1.3rem;
+            margin-bottom: 2.5rem;
+            opacity: 0.9;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        .hero-stats {
+            display: flex;
+            justify-content: center;
+            gap: 3rem;
+            margin-top: 3rem;
+        }
+        
+        .stat-item {
+            text-align: center;
+        }
+        
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: 700;
+            display: block;
+            color: white;
+        }
+        
+        .stat-label {
+            font-size: 0.9rem;
+            opacity: 0.8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        /* Featured Post */
+        .featured-section {
+            padding: 4rem 0;
+        }
+        
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 3rem;
+        }
+        
+        .section-title {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: var(--dark);
+            position: relative;
+            display: inline-block;
+        }
+        
+        .section-title::after {
+            content: '';
+            position: absolute;
+            bottom: -10px;
+            left: 0;
+            width: 60px;
+            height: 4px;
+            background: var(--gradient-primary);
+            border-radius: 2px;
+        }
+        
+        .section-subtitle {
+            color: var(--gray);
+            font-size: 1.1rem;
+            margin-top: 0.5rem;
+        }
+        
+        .featured-post {
+            background: var(--lighter);
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: var(--shadow-lg);
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 3rem;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .featured-post:hover {
+            transform: translateY(-10px);
+            box-shadow: var(--shadow-xl);
+        }
+        
+        .featured-image {
+            width: 100%;
+            height: 100%;
+            min-height: 400px;
+            object-fit: cover;
+            transition: transform 0.5s ease;
+        }
+        
+        .featured-post:hover .featured-image {
+            transform: scale(1.05);
+        }
+        
+        .featured-content {
+            padding: 3rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        
+        .featured-badge {
+            background: var(--gradient-primary);
+            color: white;
+            padding: 0.5rem 1.5rem;
+            border-radius: 50px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            display: inline-block;
+            margin-bottom: 1.5rem;
+            align-self: flex-start;
+        }
+        
+        .featured-title {
+            font-size: 2.2rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            line-height: 1.3;
+        }
+        
+        .featured-title a {
+            color: inherit;
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+        
+        .featured-title a:hover {
+            color: var(--primary);
+        }
+        
+        .featured-excerpt {
+            color: var(--gray);
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
+            line-height: 1.8;
+        }
+        
+        /* Posts Grid */
+        .posts-section {
+            padding: 4rem 0;
+            background: var(--light);
+        }
+        
+        .posts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 2.5rem;
+            margin-bottom: 4rem;
+        }
+        
+        .post-card {
+            background: var(--lighter);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: var(--shadow-md);
+            transition: all 0.3s ease;
+            position: relative;
+        }
+        
+        .post-card:hover {
+            transform: translateY(-10px);
+            box-shadow: var(--shadow-lg);
+        }
+        
+        .post-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 5px;
+            background: var(--gradient-primary);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        .post-card:hover::before {
+            opacity: 1;
+        }
+        
+        .post-image-container {
+            position: relative;
+            overflow: hidden;
+            height: 220px;
+        }
+        
+        .post-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.5s ease;
+        }
+        
+        .post-card:hover .post-image {
+            transform: scale(1.1);
+        }
+        
+        .post-category {
+            position: absolute;
+            top: 1rem;
+            left: 1rem;
+            background: var(--lighter);
+            color: var(--primary);
+            padding: 0.4rem 1rem;
+            border-radius: 50px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            box-shadow: var(--shadow-sm);
+        }
+        
+        .post-content {
+            padding: 2rem;
+        }
+        
+        .post-title {
+            font-size: 1.4rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            line-height: 1.4;
+        }
+        
+        .post-title a {
+            color: inherit;
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+        
+        .post-title a:hover {
+            color: var(--primary);
+        }
+        
+        .post-excerpt {
+            color: var(--gray);
+            margin-bottom: 1.5rem;
+            line-height: 1.7;
+            font-size: 0.95rem;
+        }
+        
+        .post-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: var(--gray-light);
+            font-size: 0.85rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+        }
+        
+        .post-meta span {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .read-more {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s ease;
+        }
+        
+        .read-more:hover {
+            gap: 12px;
+            color: var(--primary-dark);
+        }
+        
+        /* Categories Section */
+        .categories-section {
+            padding: 4rem 0;
+            background: var(--lighter);
+        }
+        
+        .categories-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 2rem;
+        }
+        
+        .category-card {
+            background: var(--light);
+            border-radius: 16px;
+            padding: 2.5rem 2rem;
+            text-align: center;
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+        }
+        
+        .category-card:hover {
+            background: var(--gradient-primary);
+            transform: translateY(-5px);
+            box-shadow: var(--shadow-lg);
+        }
+        
+        .category-card:hover * {
+            color: white !important;
+        }
+        
+        .category-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1.5rem;
+            color: var(--primary);
+        }
+        
+        .category-name {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--dark);
+        }
+        
+        .category-count {
+            color: var(--gray);
+            font-size: 0.9rem;
+        }
+        
+        /* Popular Posts */
+        .popular-section {
+            padding: 4rem 0;
+        }
+        
+        .popular-posts {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+        
+        .popular-post {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            background: var(--lighter);
+            padding: 1.5rem;
+            border-radius: 12px;
+            transition: all 0.3s ease;
+            border-left: 4px solid transparent;
+        }
+        
+        .popular-post:hover {
+            border-left-color: var(--primary);
+            transform: translateX(10px);
+            box-shadow: var(--shadow-md);
+        }
+        
+        .popular-rank {
+            font-size: 1.5rem;
+            font-weight: 800;
+            color: var(--primary);
+            min-width: 40px;
+        }
+        
+        .popular-content h4 {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .popular-content h4 a {
+            color: var(--dark);
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+        
+        .popular-content h4 a:hover {
+            color: var(--primary);
+        }
+        
+        .popular-meta {
+            color: var(--gray-light);
+            font-size: 0.85rem;
+            display: flex;
+            gap: 1rem;
+        }
+        
+        /* Newsletter */
+        .newsletter-section {
+            padding: 5rem 0;
+            background: var(--gradient-dark);
+            color: white;
+            text-align: center;
+        }
+        
+        .newsletter-content {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        .newsletter-title {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .newsletter-subtitle {
+            opacity: 0.9;
+            margin-bottom: 2rem;
+        }
+        
+        .newsletter-form {
+            display: flex;
+            gap: 1rem;
+            max-width: 500px;
+            margin: 2rem auto 0;
+        }
+        
+        .newsletter-input {
+            flex: 1;
+            padding: 1rem 1.5rem;
+            border: none;
+            border-radius: 50px;
+            font-family: 'Poppins', sans-serif;
+            font-size: 1rem;
+            outline: none;
+        }
+        
+        .newsletter-btn {
+            background: var(--gradient-primary);
+            color: white;
+            border: none;
+            padding: 1rem 2rem;
+            border-radius: 50px;
+            font-family: 'Poppins', sans-serif;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .newsletter-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(99, 102, 241, 0.3);
+        }
+        
+        /* Pagination */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-top: 4rem;
+        }
+        
+        .page-link {
+            padding: 0.8rem 1.2rem;
+            border: 2px solid var(--border);
+            border-radius: 10px;
+            text-decoration: none;
+            color: var(--dark);
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        .page-link:hover,
+        .page-link.active {
+            background: var(--gradient-primary);
+            color: white;
+            border-color: transparent;
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+        
+        /* Footer */
+        footer {
+            background: var(--darker);
+            color: white;
+            padding: 5rem 0 2rem;
+        }
+        
+        .footer-content {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 3rem;
+            margin-bottom: 3rem;
+        }
+        
+        .footer-col h3 {
+            font-size: 1.3rem;
+            margin-bottom: 1.5rem;
+            color: white;
+        }
+        
+        .footer-logo {
+            font-size: 2rem;
+            font-weight: 800;
+            margin-bottom: 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            color: white;
+        }
+        
+        .footer-col p {
+            opacity: 0.8;
+            line-height: 1.8;
+        }
+        
+        .footer-links {
+            list-style: none;
+        }
+        
+        .footer-links li {
+            margin-bottom: 0.8rem;
+        }
+        
+        .footer-links a {
+            color: rgba(255,255,255,0.8);
+            text-decoration: none;
+            transition: color 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .footer-links a:hover {
+            color: white;
+            transform: translateX(5px);
+        }
+        
+        .social-links {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
+        
+        .social-link {
+            width: 40px;
+            height: 40px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            text-decoration: none;
+            transition: all 0.3s ease;
+        }
+        
+        .social-link:hover {
+            background: var(--primary);
+            transform: translateY(-3px);
+        }
+        
+        .copyright {
+            text-align: center;
+            padding-top: 3rem;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            color: rgba(255,255,255,0.6);
+            font-size: 0.9rem;
+        }
+        
+        /* Back to top */
+        .back-to-top {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            background: var(--gradient-primary);
+            color: white;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+            box-shadow: var(--shadow-lg);
+            transition: all 0.3s ease;
+            z-index: 100;
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        
+        .back-to-top.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        
+        .back-to-top:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(99, 102, 241, 0.4);
+        }
+        
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .featured-post {
+                grid-template-columns: 1fr;
+            }
+            
+            .featured-image {
+                min-height: 300px;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 0 1.5rem;
+            }
+            
+            .navbar {
+                flex-direction: column;
+                gap: 1.5rem;
+                padding: 1.5rem 0;
+            }
+            
+            .nav-links {
+                flex-wrap: wrap;
+                justify-content: center;
+                gap: 1.5rem;
+            }
+            
+            .hero-title {
+                font-size: 2.5rem;
+            }
+            
+            .hero-stats {
+                flex-direction: column;
+                gap: 1.5rem;
+            }
+            
+            .posts-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .newsletter-form {
+                flex-direction: column;
+            }
+            
+            .footer-content {
+                grid-template-columns: 1fr;
+                text-align: center;
+            }
+            
+            .social-links {
+                justify-content: center;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .hero-title {
+                font-size: 2rem;
+            }
+            
+            .section-title {
+                font-size: 1.8rem;
+            }
+            
+            .featured-title {
+                font-size: 1.8rem;
+            }
+            
+            .featured-content {
+                padding: 2rem;
+            }
+            
+            .newsletter-title {
+                font-size: 2rem;
+            }
+        }
     </style>
 </head>
 <body>
@@ -204,14 +986,13 @@ try {
                         <span><i class="fas fa-comments"></i> 
                             <?php 
                             try {
-                                $comment_count_query = "SELECT COUNT(*) as count FROM comments WHERE post_id = :post_id AND status = 'approved'";
-                                $stmt = $conn->prepare($comment_count_query);
-                                $stmt->execute([':post_id' => $featured_post['id']]);
-                                $comment_count = $stmt->fetch()['count'];
+                                $stmt = $conn->prepare("SELECT COUNT(*) as count FROM comments WHERE post_id = ? AND status = 'approved'");
+                                $stmt->execute([$featured_post['id']]);
+                                $comment_count = $stmt->fetch()['count'] ?? 0;
+                                echo $comment_count;
                             } catch (PDOException $e) {
-                                $comment_count = 0;
+                                echo "0";
                             }
-                            echo $comment_count;
                             ?> comments
                         </span>
                     </div>
@@ -270,14 +1051,13 @@ try {
                                 <span><i class="fas fa-comments"></i> 
                                     <?php 
                                     try {
-                                        $comment_count_query = "SELECT COUNT(*) as count FROM comments WHERE post_id = :post_id AND status = 'approved'";
-                                        $stmt = $conn->prepare($comment_count_query);
-                                        $stmt->execute([':post_id' => $post['id']]);
-                                        $comment_count = $stmt->fetch()['count'];
+                                        $stmt = $conn->prepare("SELECT COUNT(*) as count FROM comments WHERE post_id = ? AND status = 'approved'");
+                                        $stmt->execute([$post['id']]);
+                                        $comment_count = $stmt->fetch()['count'] ?? 0;
+                                        echo $comment_count;
                                     } catch (PDOException $e) {
-                                        $comment_count = 0;
+                                        echo "0";
                                     }
-                                    echo $comment_count;
                                     ?>
                                 </span>
                             </div>
@@ -555,6 +1335,5 @@ try {
 </body>
 </html>
 <?php 
-// PDO connection closes automatically when $conn is destroyed
-// No need to explicitly close it
+// Close connection is not needed as PDO automatically closes
 ?>
